@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from fastapi.staticfiles import StaticFiles
-from app.routers import auth, usuarios, vehiculos, talleres, tecnicos,incidentes, bitacora,evidencias,ia,asignacion,dashboard,solicitudes, tracking
+from app.routers import auth, usuarios, vehiculos, talleres, tecnicos,incidentes, bitacora,evidencias,ia,asignacion,dashboard,solicitudes, tracking, validacion_arribo, chat, pagos, evaluaciones, notificaciones, suscripciones, cotizaciones
 import os 
 
 
@@ -17,10 +17,10 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://tallervehicular.vercel.app",
+        #"https://tallervehicular.vercel.app",
         "http://localhost:4200",
         "http://127.0.0.1:4200",
-        "https://copia-backend.onrender.com"
+        #"https://copia-backend.onrender.com"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -43,6 +43,13 @@ app.include_router(asignacion.router)
 app.include_router(dashboard.router)
 app.include_router(solicitudes.router)
 app.include_router(tracking.router)
+app.include_router(validacion_arribo.router)
+app.include_router(chat.router)
+app.include_router(pagos.router)
+app.include_router(evaluaciones.router)
+app.include_router(notificaciones.router)
+app.include_router(suscripciones.router)
+app.include_router(cotizaciones.router)
 app.include_router(incidentes.router , prefix = "/incidentes",  tags=["Incidentes"])
 
 os.makedirs("uploads/imagenes", exist_ok=True)

@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status , Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from jose import jwt, JWTError
+from pydantic import BaseModel
 from app.services.auth_service import registrar_bitacora
+from app.services.notificaciones_service import notificar_cambio_asignacion
+from app.services.suscripciones_service import validar_limite_tecnicos
 from app.database import get_db
 from app.models.talleres import Tecnico, Taller
 from app.models.seguridad import Usuario
@@ -16,13 +19,27 @@ from app.schemas.tecnico import (
 )
 from app.services.auth_service import hash_password, verify_password, create_access_token
 from app.config import settings
-from datetime import datetime
+from datetime import datetime, date
 from sqlalchemy import func
-from app.models.operaciones import Asignacion, Incidente
+from app.models.operaciones import Asignacion, HistorialEstado, Incidente
 
 
 router = APIRouter(prefix="/tecnicos", tags=["Técnicos"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+
+ESTADO_ACEPTADA_TALLER = 2
+ESTADO_ASIGNADA_TECNICO = 4
+ESTADO_EN_CAMINO = 5
+ESTADO_FINALIZADA = 6
+ESTADO_TECNICO_ACEPTO = 9
+ESTADO_TECNICO_LLEGO = 10
+ESTADO_ATENCION_INICIADA = 11
+
+
+class ProgresoTecnicoRequest(BaseModel):
+    observacion: Optional[str] = None
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
 
 
 def get_current_usuario(
@@ -80,7 +97,7 @@ def get_current_tecnico(
             raise credentials_exception
 
         # ✅ CAMBIO: opcional, pero ayuda a validar que sea técnico
-        if tipo != "tecnico" and rol != 3:
+        if tipo != "tecnico" or rol != 3:
             raise HTTPException(
                 status_code=403,
                 detail="No autorizado como técnico"
@@ -166,6 +183,7 @@ def crear_mi_tecnico(
         raise HTTPException(status_code=403, detail="No autorizado")
 
     taller = get_taller_admin(usuario, db)
+    validar_limite_tecnicos(db, taller.codigo)
 
     existe_codigo = db.query(Tecnico).filter(Tecnico.codigo == datos.codigo).first()
     if existe_codigo:
@@ -225,6 +243,7 @@ def actualizar_mi_tecnico(
     if not tecnico:
         raise HTTPException(status_code=404, detail="Técnico no encontrado en tu taller")
 
+    disponibilidad_anterior = tecnico.disponibilidad
     datos_dict = datos.model_dump(exclude_unset=True)
     datos_dict.pop("id_taller", None)
 
@@ -292,7 +311,14 @@ def eliminar_mi_tecnico(
 # =========================
 
 @router.post("/crear", response_model=TecnicoResponse, status_code=201)
-def crear_tecnico(datos: TecnicoCreate, db: Session = Depends(get_db)):
+def crear_tecnico(
+    datos: TecnicoCreate,
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
+    if usuario.id_rol != 1:
+        raise HTTPException(status_code=403, detail="Solo el administrador puede crear tecnicos globalmente")
+
     existe_codigo = db.query(Tecnico).filter(Tecnico.codigo == datos.codigo).first()
     if existe_codigo:
         raise HTTPException(status_code=400, detail="El CI ya está registrado")
@@ -327,7 +353,18 @@ def crear_tecnico(datos: TecnicoCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/taller/{id_taller}", response_model=List[TecnicoResponse])
-def listar_por_taller(id_taller: int, db: Session = Depends(get_db)):
+def listar_por_taller(
+    id_taller: int,
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
+    if usuario.id_rol == 2:
+        taller = get_taller_admin(usuario, db)
+        if taller.codigo != id_taller:
+            raise HTTPException(status_code=403, detail="No autorizado para consultar tecnicos de otro taller")
+    elif usuario.id_rol != 1:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
     return db.query(Tecnico).filter(Tecnico.id_taller == id_taller).all()
 
 
@@ -335,12 +372,28 @@ def listar_por_taller(id_taller: int, db: Session = Depends(get_db)):
 
 
 @router.patch("/{codigo}", response_model=TecnicoResponse)
-def actualizar_tecnico(codigo: str, datos: TecnicoUpdate, db: Session = Depends(get_db)):
+def actualizar_tecnico(
+    codigo: str,
+    datos: TecnicoUpdate,
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
     tecnico = db.query(Tecnico).filter(Tecnico.codigo == codigo).first()
     if not tecnico:
         raise HTTPException(status_code=404, detail="Técnico no encontrado")
 
-    for campo, valor in datos.model_dump(exclude_unset=True).items():
+    if usuario.id_rol == 2:
+        taller = get_taller_admin(usuario, db)
+        if tecnico.id_taller != taller.codigo:
+            raise HTTPException(status_code=403, detail="No autorizado para modificar tecnicos de otro taller")
+    elif usuario.id_rol != 1:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    datos_dict = datos.model_dump(exclude_unset=True)
+    if usuario.id_rol == 2:
+        datos_dict.pop("id_taller", None)
+
+    for campo, valor in datos_dict.items():
         setattr(tecnico, campo, float(valor) if campo in ["latitud", "longitud"] else valor)
 
     db.commit()
@@ -349,10 +402,21 @@ def actualizar_tecnico(codigo: str, datos: TecnicoUpdate, db: Session = Depends(
 
 
 @router.delete("/{codigo}")
-def eliminar_tecnico(codigo: str, db: Session = Depends(get_db)):
+def eliminar_tecnico(
+    codigo: str,
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
     tecnico = db.query(Tecnico).filter(Tecnico.codigo == codigo).first()
     if not tecnico:
         raise HTTPException(status_code=404, detail="Técnico no encontrado")
+
+    if usuario.id_rol == 2:
+        taller = get_taller_admin(usuario, db)
+        if tecnico.id_taller != taller.codigo:
+            raise HTTPException(status_code=403, detail="No autorizado para eliminar tecnicos de otro taller")
+    elif usuario.id_rol != 1:
+        raise HTTPException(status_code=403, detail="No autorizado")
 
     db.delete(tecnico)
     db.commit()
@@ -368,7 +432,10 @@ def nombre_estado_asignacion(id_estado: int) -> str:
         5: "En camino",
         6: "Finalizada",
         7: "Cancelada",
-        8: "Sin taller disponible"
+        8: "Sin taller disponible",
+        9: "Servicio aceptado por tecnico",
+        10: "Tecnico llego",
+        11: "Atencion iniciada"
     }
     return estados.get(id_estado, "Desconocido")
 
@@ -429,7 +496,7 @@ def dashboard_tecnico(
 
     activos = len([
         a for a in asignaciones
-        if a.id_estado_asignacion in [4, 5]
+        if a.id_estado_asignacion in [4, 5, 9, 10, 11]
     ])
 
     finalizados = len([
@@ -466,7 +533,7 @@ def asignacion_actual_tecnico(
 ):
     asignacion = db.query(Asignacion).filter(
         Asignacion.id_tecnico == tecnico.codigo,
-        Asignacion.id_estado_asignacion.in_([4, 5])
+        Asignacion.id_estado_asignacion.in_([4, 5, 9, 10, 11])
     ).order_by(
         Asignacion.fecha_asignacion.desc()
     ).first()
@@ -496,15 +563,261 @@ def historial_tecnico(
 
     return resultado
 # ✅ CAMBIO: técnico inicia ruta hacia el cliente
+def obtener_asignacion_del_tecnico(
+    id_asignacion: int,
+    tecnico: Tecnico,
+    db: Session
+):
+    asignacion = db.query(Asignacion).filter(
+        Asignacion.id == id_asignacion
+    ).first()
+
+    if not asignacion:
+        raise HTTPException(status_code=404, detail="Asignacion no encontrada")
+
+    if asignacion.id_tecnico != tecnico.codigo:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el tecnico asignado puede actualizar el progreso"
+        )
+
+    return asignacion
+
+
+def registrar_progreso_tecnico(
+    db: Session,
+    request: Request,
+    tecnico: Tecnico,
+    asignacion: Asignacion,
+    accion: str,
+    descripcion: str,
+):
+    db.add(HistorialEstado(
+        fecha_cambio=datetime.now(),
+        id_incidente=asignacion.id_incidente
+    ))
+
+    registrar_bitacora(
+        db=db,
+        codigo_usuario=None,
+        codigo_tecnico=tecnico.codigo,
+        id_taller=asignacion.id_taller,
+        accion=accion,
+        modulo="PROGRESO_TECNICO",
+        descripcion=descripcion,
+        ip_address=request.client.host if request.client else None
+    )
+
+
+def respuesta_progreso(mensaje: str, asignacion: Asignacion):
+    return {
+        "mensaje": mensaje,
+        "id_asignacion": asignacion.id,
+        "id_incidente": asignacion.id_incidente,
+        "id_tecnico": asignacion.id_tecnico,
+        "id_estado_asignacion": asignacion.id_estado_asignacion,
+        "observacion": asignacion.observacion
+    }
+
+
+@router.put("/progreso/{id_asignacion}/aceptar")
+def tecnico_aceptar_servicio(
+    id_asignacion: int,
+    datos: ProgresoTecnicoRequest = ProgresoTecnicoRequest(),
+    tecnico: Tecnico = Depends(get_current_tecnico),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    asignacion = obtener_asignacion_del_tecnico(id_asignacion, tecnico, db)
+
+    if asignacion.id_estado_asignacion != ESTADO_ASIGNADA_TECNICO:
+        raise HTTPException(
+            status_code=400,
+            detail="El servicio debe estar asignado al tecnico para poder aceptarlo"
+        )
+
+    asignacion.id_estado_asignacion = ESTADO_TECNICO_ACEPTO
+    asignacion.observacion = datos.observacion or "Servicio aceptado por el tecnico"
+
+    registrar_progreso_tecnico(
+        db,
+        request,
+        tecnico,
+        asignacion,
+        "TECNICO_ACEPTAR_SERVICIO",
+        f"El tecnico {tecnico.codigo} acepto la asignacion {asignacion.id}"
+    )
+    notificar_cambio_asignacion(
+        db,
+        asignacion,
+        "El tecnico acepto tu servicio.",
+        f"El tecnico {tecnico.codigo} acepto la asignacion {asignacion.id}."
+    )
+
+    db.commit()
+    db.refresh(asignacion)
+    return respuesta_progreso("Servicio aceptado correctamente", asignacion)
+
+
+@router.put("/progreso/{id_asignacion}/en-camino")
+def tecnico_marcar_en_camino(
+    id_asignacion: int,
+    datos: ProgresoTecnicoRequest = ProgresoTecnicoRequest(),
+    tecnico: Tecnico = Depends(get_current_tecnico),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    asignacion = obtener_asignacion_del_tecnico(id_asignacion, tecnico, db)
+
+    if asignacion.id_estado_asignacion not in [ESTADO_ASIGNADA_TECNICO, ESTADO_TECNICO_ACEPTO]:
+        raise HTTPException(
+            status_code=400,
+            detail="El servicio debe estar aceptado por el tecnico antes de marcar en camino"
+        )
+
+    asignacion.id_estado_asignacion = ESTADO_EN_CAMINO
+    asignacion.observacion = datos.observacion or "Tecnico en camino al cliente"
+
+    incidente = db.query(Incidente).filter(
+        Incidente.codigo == asignacion.id_incidente
+    ).first()
+    if incidente:
+        incidente.id_estado_incidente = 2
+
+    registrar_progreso_tecnico(
+        db,
+        request,
+        tecnico,
+        asignacion,
+        "INICIAR_RUTA",
+        f"El tecnico {tecnico.codigo} inicio ruta para la asignacion {asignacion.id}"
+    )
+    notificar_cambio_asignacion(
+        db,
+        asignacion,
+        "El tecnico esta en camino a tu ubicacion.",
+        f"El tecnico {tecnico.codigo} marco en camino para la asignacion {asignacion.id}."
+    )
+
+    db.commit()
+    db.refresh(asignacion)
+    return respuesta_progreso("Tecnico marcado en camino", asignacion)
+
+
+@router.put("/progreso/{id_asignacion}/llegada")
+def tecnico_marcar_llegada(
+    id_asignacion: int,
+    datos: ProgresoTecnicoRequest = ProgresoTecnicoRequest(),
+    tecnico: Tecnico = Depends(get_current_tecnico),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    raise HTTPException(
+        status_code=400,
+        detail="La llegada debe validarse con PIN o QR en /validacion-arribo/asignacion/{id_asignacion}/validar"
+    )
+
+
+@router.put("/progreso/{id_asignacion}/iniciar-atencion")
+def tecnico_iniciar_atencion(
+    id_asignacion: int,
+    datos: ProgresoTecnicoRequest = ProgresoTecnicoRequest(),
+    tecnico: Tecnico = Depends(get_current_tecnico),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    asignacion = obtener_asignacion_del_tecnico(id_asignacion, tecnico, db)
+
+    if asignacion.id_estado_asignacion != ESTADO_TECNICO_LLEGO:
+        raise HTTPException(
+            status_code=400,
+            detail="El tecnico debe marcar llegada antes de iniciar atencion"
+        )
+
+    asignacion.id_estado_asignacion = ESTADO_ATENCION_INICIADA
+    asignacion.observacion = datos.observacion or "Atencion del servicio iniciada"
+
+    registrar_progreso_tecnico(
+        db,
+        request,
+        tecnico,
+        asignacion,
+        "INICIAR_ATENCION",
+        f"El tecnico {tecnico.codigo} inicio atencion para la asignacion {asignacion.id}"
+    )
+    notificar_cambio_asignacion(
+        db,
+        asignacion,
+        "La atencion de tu servicio fue iniciada.",
+        f"El tecnico {tecnico.codigo} inicio la atencion de la asignacion {asignacion.id}."
+    )
+
+    db.commit()
+    db.refresh(asignacion)
+    return respuesta_progreso("Atencion iniciada correctamente", asignacion)
+
+
+@router.put("/progreso/{id_asignacion}/finalizar")
+def tecnico_finalizar_progreso(
+    id_asignacion: int,
+    datos: ProgresoTecnicoRequest = ProgresoTecnicoRequest(),
+    tecnico: Tecnico = Depends(get_current_tecnico),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    asignacion = obtener_asignacion_del_tecnico(id_asignacion, tecnico, db)
+
+    if asignacion.id_estado_asignacion != ESTADO_ATENCION_INICIADA:
+        raise HTTPException(
+            status_code=400,
+            detail="El tecnico debe iniciar la atencion antes de finalizar el servicio"
+        )
+
+    incidente = db.query(Incidente).filter(
+        Incidente.codigo == asignacion.id_incidente
+    ).first()
+
+    asignacion.id_estado_asignacion = ESTADO_FINALIZADA
+    asignacion.observacion = datos.observacion or "Servicio finalizado por el tecnico"
+    tecnico.disponibilidad = True
+
+    if incidente:
+        incidente.id_estado_incidente = 4
+        incidente.fecha_cierre = datetime.now()
+
+    registrar_progreso_tecnico(
+        db,
+        request,
+        tecnico,
+        asignacion,
+        "FINALIZAR_SERVICIO",
+        f"El tecnico {tecnico.codigo} finalizo la asignacion {asignacion.id}"
+    )
+    notificar_cambio_asignacion(
+        db,
+        asignacion,
+        "Tu servicio fue finalizado. Ya puedes revisar el pago o evaluar el servicio.",
+        f"El tecnico {tecnico.codigo} finalizo la asignacion {asignacion.id}."
+    )
+
+    db.commit()
+    db.refresh(asignacion)
+    return respuesta_progreso("Servicio finalizado correctamente", asignacion)
+
+
 @router.put("/{id_asignacion}/iniciar-ruta")
 def iniciar_ruta(
     id_asignacion: int,
     request: Request,
+    tecnico_actual: Tecnico = Depends(get_current_tecnico),
     db: Session = Depends(get_db)
 ):
     asignacion = db.query(Asignacion).filter(
         Asignacion.id == id_asignacion
     ).first()
+
+    if asignacion and asignacion.id_tecnico != tecnico_actual.codigo:
+        raise HTTPException(status_code=403, detail="Solo el tecnico asignado puede iniciar ruta")
 
     if not asignacion:
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
@@ -542,11 +855,15 @@ def iniciar_ruta(
 def finalizar_servicio(
     id_asignacion: int,
     request: Request,
+    tecnico_actual: Tecnico = Depends(get_current_tecnico),
     db: Session = Depends(get_db)
 ):
     asignacion = db.query(Asignacion).filter(
         Asignacion.id == id_asignacion
     ).first()
+
+    if asignacion and asignacion.id_tecnico != tecnico_actual.codigo:
+        raise HTTPException(status_code=403, detail="Solo el tecnico asignado puede finalizar este servicio")
 
     if not asignacion:
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
@@ -596,8 +913,19 @@ def finalizar_servicio(
     }
 
 @router.get("/{codigo}", response_model=TecnicoResponse)
-def obtener_tecnico(codigo: str, db: Session = Depends(get_db)):
+def obtener_tecnico(
+    codigo: str,
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
     tecnico = db.query(Tecnico).filter(Tecnico.codigo == codigo).first()
     if not tecnico:
         raise HTTPException(status_code=404, detail="Técnico no encontrado")
+    if usuario.id_rol == 2:
+        taller = get_taller_admin(usuario, db)
+        if tecnico.id_taller != taller.codigo:
+            raise HTTPException(status_code=403, detail="No autorizado para consultar tecnicos de otro taller")
+    elif usuario.id_rol != 1:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
     return tecnico

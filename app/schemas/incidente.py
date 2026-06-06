@@ -14,6 +14,7 @@ class IncidenteCreate(BaseModel):
     id_estado_incidente: int = 1
     id_vehiculo: int
     codigo_usuario: str
+    cotizacion_express: bool = False
 
 
 class IncidenteUpdate(BaseModel):

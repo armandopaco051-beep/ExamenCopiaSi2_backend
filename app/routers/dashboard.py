@@ -1,15 +1,34 @@
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.operaciones import Incidente, Asignacion
 from app.models.talleres import Taller, Tecnico
 from app.models.seguridad import Usuario, Bitacora
+from app.routers.tecnicos import get_current_usuario, get_taller_admin
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+
+
+def validar_admin_global(usuario: Usuario):
+    if usuario.id_rol != 1:
+        raise HTTPException(status_code=403, detail="Solo el administrador puede consultar el dashboard global")
+
+
+def obtener_id_taller_autorizado(id_taller: int, usuario: Usuario, db: Session) -> int:
+    if usuario.id_rol == 1:
+        return id_taller
+
+    if usuario.id_rol == 2:
+        taller = get_taller_admin(usuario, db)
+        if taller.codigo != id_taller:
+            raise HTTPException(status_code=403, detail="No autorizado para consultar otro taller")
+        return taller.codigo
+
+    raise HTTPException(status_code=403, detail="No autorizado")
 
 
 def nombre_dia_es(fecha):
@@ -29,8 +48,12 @@ def nombre_categoria(codigo: int) -> str:
 
 
 @router.get("/admin-plataforma")
-def dashboard_admin(db: Session = Depends(get_db)):
+def dashboard_admin(
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
     """Dashboard para Admin Plataforma"""
+    validar_admin_global(usuario)
 
     total_incidentes = db.query(Incidente).count()
 
@@ -155,8 +178,7 @@ def dashboard_admin(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/admin-taller/{id_taller}")
-def dashboard_taller(id_taller: int, db: Session = Depends(get_db)):
+def construir_dashboard_taller(id_taller: int, db: Session):
     """CU-16: Dashboard para Admin Taller"""
 
     asignaciones = db.query(Asignacion).filter(
@@ -223,3 +245,25 @@ def dashboard_taller(id_taller: int, db: Session = Depends(get_db)):
         },
         "solicitudes_pendientes": solicitudes
     }
+
+
+@router.get("/admin-taller/{id_taller}")
+def dashboard_taller(
+    id_taller: int,
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
+    id_taller_autorizado = obtener_id_taller_autorizado(id_taller, usuario, db)
+    return construir_dashboard_taller(id_taller_autorizado, db)
+
+
+@router.get("/mi-taller")
+def dashboard_mi_taller(
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
+    if usuario.id_rol != 2:
+        raise HTTPException(status_code=403, detail="Solo el admin_taller puede consultar este dashboard")
+
+    taller = get_taller_admin(usuario, db)
+    return construir_dashboard_taller(taller.codigo, db)

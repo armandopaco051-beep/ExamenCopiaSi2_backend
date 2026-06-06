@@ -7,11 +7,29 @@ from app.database import get_db
 from app.models.operaciones import Incidente, Asignacion
 from app.models.talleres import Taller, Tecnico
 from app.services.auth_service import registrar_bitacora
+from app.routers.tecnicos import get_current_usuario, get_current_tecnico, get_taller_admin
+from app.services.notificaciones_service import crear_notificacion, notificar_cambio_asignacion
 import math
 from app.schemas.asignacion import ResponderAsignacion, AsignacionCreate, AsignarTecnicoRequest
 from sqlalchemy import text
 from app.models.seguridad import Usuario
 router =  APIRouter(prefix="/asignacion", tags=["Asignacion"])
+
+
+def validar_acceso_taller(usuario: Usuario, db: Session, id_taller: int):
+    if usuario.id_rol == 1:
+        return
+
+    if usuario.id_rol == 2:
+        taller = get_taller_admin(usuario, db)
+        if taller.codigo == id_taller:
+            return
+
+    raise HTTPException(status_code=403, detail="No autorizado para operar sobre este taller")
+
+
+def validar_acceso_asignacion_taller(usuario: Usuario, db: Session, asignacion: Asignacion):
+    validar_acceso_taller(usuario, db, asignacion.id_taller)
 
 def calcular_distancia(lat1, lon1, lat2, lon2) -> float:
     """Distancia en km con fórmula de Haversine"""
@@ -23,6 +41,19 @@ def calcular_distancia(lat1, lon1, lat2, lon2) -> float:
          math.cos(math.radians(float(lat2))) *
          math.sin(d_lon / 2) ** 2)
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def obtener_radio_cobertura(taller: Taller) -> float:
+    return float(taller.radio_cobertura_km or 10.0)
+
+
+def calcular_distancia_taller_incidente(taller: Taller, incidente: Incidente) -> float:
+    return calcular_distancia(
+        incidente.latitud,
+        incidente.longitud,
+        taller.latitud,
+        taller.longitud
+    )
 # ✅ CAMBIO: busca el siguiente taller más cercano que todavía NO recibió ese incidente
 def asignar_siguiente_taller(db: Session, incidente: Incidente):
     """
@@ -63,25 +94,22 @@ def asignar_siguiente_taller(db: Session, incidente: Incidente):
     if not talleres:
         return None
 
-    # ordenar por distancia al incidente
-    talleres_ordenados = sorted(
-        talleres,
-        key=lambda t: calcular_distancia(
-            incidente.latitud,
-            incidente.longitud,
-            t.latitud,
-            t.longitud
-        )
-    )
+    candidatos_en_cobertura = []
+    for taller in talleres:
+        distancia = calcular_distancia_taller_incidente(taller, incidente)
+        if distancia <= obtener_radio_cobertura(taller):
+            candidatos_en_cobertura.append({
+                "taller": taller,
+                "distancia": distancia
+            })
 
-    taller_elegido = talleres_ordenados[0]
+    if not candidatos_en_cobertura:
+        return None
 
-    distancia = calcular_distancia(
-        incidente.latitud,
-        incidente.longitud,
-        taller_elegido.latitud,
-        taller_elegido.longitud
-    )
+    candidatos_en_cobertura.sort(key=lambda c: c["distancia"])
+    mejor = candidatos_en_cobertura[0]
+    taller_elegido = mejor["taller"]
+    distancia = mejor["distancia"]
 
     # crear solicitud pendiente para el taller más cercano
     nueva_asignacion = Asignacion(
@@ -97,6 +125,12 @@ def asignar_siguiente_taller(db: Session, incidente: Incidente):
 
     db.add(nueva_asignacion)
     db.flush()
+    notificar_cambio_asignacion(
+        db,
+        nueva_asignacion,
+        "Estamos buscando confirmacion de un taller cercano para atender tu emergencia.",
+        f"Nueva emergencia cercana disponible: incidente {incidente.codigo}."
+    )
 
     return nueva_asignacion
 
@@ -117,6 +151,9 @@ def obtener_candidatos(id_incidente: int ,  db: Session = Depends(get_db)):
         distancia  = calcular_distancia(
             incidente.latitud, incidente.longitud, taller.latitud, taller.longitud 
         )
+        radio_cobertura = obtener_radio_cobertura(taller)
+        if distancia > radio_cobertura:
+            continue
         #Score menor distancia = mayor Score 
         #prioridad alta de suma de puntos
         score_distancia = max(0,100 - distancia * 5 )
@@ -128,10 +165,12 @@ def obtener_candidatos(id_incidente: int ,  db: Session = Depends(get_db)):
                 "codigo" : taller.codigo,
                 "nombre": taller.nombre,
                 "telefono" : taller.telefono,
-                "direccion" : taller.direccion
+                "direccion" : taller.direccion,
+                "radio_cobertura_km": radio_cobertura
                 
             },
             "distancia_km" : round(distancia,2),
+            "dentro_cobertura": True,
             "tecnicos_disponible" : len(tecnicos_disponible),
             "tecnico":[{
                 "codigo" : t.codigo,
@@ -221,9 +260,14 @@ def crear_asignacion_automatica(
             taller.longitud
         )
 
+        radio_cobertura = obtener_radio_cobertura(taller)
+        if distancia > radio_cobertura:
+            continue
+
         candidatos.append({
             "taller": taller,
             "distancia": distancia,
+            "radio_cobertura_km": radio_cobertura,
             "tecnicos_disponibles": len(tecnicos_disponibles)
         })
 
@@ -254,6 +298,12 @@ def crear_asignacion_automatica(
 
     # 7. Cambiar estado del incidente a "en revisión" o "en proceso"
     incidente.id_estado_incidente = 2
+    notificar_cambio_asignacion(
+        db,
+        nueva,
+        f"Tu emergencia fue enviada al taller {taller_elegido.nombre}.",
+        f"Nueva emergencia cercana disponible: incidente {incidente.codigo}."
+    )
 
     registrar_bitacora(
         db=db,
@@ -275,6 +325,8 @@ def crear_asignacion_automatica(
         "id_taller": taller_elegido.codigo,
         "nombre_taller": taller_elegido.nombre,
         "distancia_km": round(mejor["distancia"], 2),
+        "radio_cobertura_km": mejor["radio_cobertura_km"],
+        "dentro_cobertura": True,
         "id_estado_asignacion": nueva.id_estado_asignacion
     }
 
@@ -282,6 +334,7 @@ def crear_asignacion_automatica(
 def crear_asignacion(
     datos: AsignacionCreate,
     request: Request,
+    usuario: Usuario = Depends(get_current_usuario),
     db: Session = Depends(get_db)
 ):
     """CU-19: Asignar técnico a orden de trabajo"""
@@ -289,6 +342,23 @@ def crear_asignacion(
         Incidente.codigo == datos.id_incidente).first()
     if not incidente:
         raise HTTPException(status_code=404, detail="Incidente no encontrado")
+
+    taller = db.query(Taller).filter(Taller.codigo == datos.id_taller).first()
+    if not taller:
+        raise HTTPException(status_code=404, detail="Taller no encontrado")
+
+    validar_acceso_taller(usuario, db, datos.id_taller)
+
+    distancia_taller = calcular_distancia_taller_incidente(taller, incidente)
+    radio_cobertura = obtener_radio_cobertura(taller)
+    if distancia_taller > radio_cobertura:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El incidente esta a {round(distancia_taller, 2)} km "
+                f"y supera el radio de cobertura de {radio_cobertura} km"
+            )
+        )
 
     nueva = Asignacion(
         fecha_asignacion=datetime.now(),
@@ -333,11 +403,15 @@ def crear_asignacion(
 @router.put("/{id_asignacion}/aceptar")
 def aceptar_asignacion(
     id_asignacion: int,
+    usuario: Usuario = Depends(get_current_usuario),
     db: Session = Depends(get_db)
 ):
     asignacion = db.query(Asignacion).filter(
         Asignacion.id == id_asignacion
     ).first()
+
+    if asignacion:
+        validar_acceso_asignacion_taller(usuario, db, asignacion)
 
     if not asignacion:
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
@@ -353,6 +427,12 @@ def aceptar_asignacion(
     asignacion.id_estado_asignacion = 2  # 2 = Aceptada
     asignacion.fecha_aceptacion = datetime.now()
     asignacion.observacion = "Solicitud aceptada por el taller"
+    notificar_cambio_asignacion(
+        db,
+        asignacion,
+        "Tu solicitud fue aceptada por el taller. Pronto se asignara un tecnico.",
+        f"Solicitud {asignacion.id_incidente} aceptada por tu taller."
+    )
 
     db.commit()
     db.refresh(asignacion)
@@ -402,9 +482,59 @@ def buscar_siguiente_taller_para_incidente(
     """)
 
     return db.execute(sql, {"id_incidente": id_incidente}).mappings().first()
+
+
+def buscar_siguiente_taller_en_cobertura_para_incidente(
+    db: Session,
+    id_incidente: int
+):
+    sql = text("""
+        WITH talleres_candidatos AS (
+            SELECT
+                t.codigo AS id_taller,
+                t.nombre AS taller_nombre,
+                t.usuario_id AS id_usuario_taller,
+                COALESCE(t.radio_cobertura_km, 10.0) AS radio_cobertura_km,
+                (
+                    6371 * acos(
+                        LEAST(1, GREATEST(-1,
+                            cos(radians(i.latitud)) *
+                            cos(radians(t.latitud)) *
+                            cos(radians(t.longitud) - radians(i.longitud)) +
+                            sin(radians(i.latitud)) *
+                            sin(radians(t.latitud))
+                        ))
+                    )
+                ) AS distancia_km
+            FROM operaciones.incidente i
+            JOIN talleres.taller t
+                ON t.activo = true
+            WHERE i.codigo = :id_incidente
+              AND t.latitud IS NOT NULL
+              AND t.longitud IS NOT NULL
+              AND t.codigo NOT IN (
+                  SELECT a.id_taller
+                  FROM operaciones.asignacion a
+                  WHERE a.id_incidente = :id_incidente
+              )
+        )
+        SELECT
+            id_taller,
+            taller_nombre,
+            id_usuario_taller,
+            radio_cobertura_km,
+            distancia_km
+        FROM talleres_candidatos
+        WHERE distancia_km <= radio_cobertura_km
+        ORDER BY distancia_km ASC
+        LIMIT 1
+    """)
+
+    return db.execute(sql, {"id_incidente": id_incidente}).mappings().first()
 @router.put("/{id_asignacion}/rechazar")
 def rechazar_asignacion(
     id_asignacion: int,
+    usuario: Usuario = Depends(get_current_usuario),
     db: Session = Depends(get_db)
 ):
     # 1. Buscar la asignación actual
@@ -425,6 +555,7 @@ def rechazar_asignacion(
             detail="Asignación no encontrada"
         )
 
+    validar_acceso_taller(usuario, db, asignacion["id_taller"])
     id_incidente = asignacion["id_incidente"]
 
     # 2. Marcar asignación actual como rechazada
@@ -441,7 +572,7 @@ def rechazar_asignacion(
     })
 
     # 3. Buscar siguiente taller cercano
-    siguiente_taller = buscar_siguiente_taller_para_incidente(
+    siguiente_taller = buscar_siguiente_taller_en_cobertura_para_incidente(
         db,
         id_incidente
     )
@@ -453,6 +584,17 @@ def rechazar_asignacion(
             SET id_estado_incidente = id_estado_incidente
             WHERE codigo = :id_incidente
         """), {"id_incidente": id_incidente})
+
+        incidente_sin_taller = db.query(Incidente).filter(
+            Incidente.codigo == id_incidente
+        ).first()
+        if incidente_sin_taller:
+            crear_notificacion(
+                db,
+                incidente_sin_taller.codigo_usuario,
+                id_incidente,
+                "Tu solicitud fue rechazada y no se encontraron talleres disponibles en cobertura."
+            )
 
         db.commit()
 
@@ -512,6 +654,24 @@ def rechazar_asignacion(
        # "mensaje": f"Nuevo incidente cercano asignado al taller {siguiente_taller['taller_nombre']}"
     #})
 
+    incidente_reasignado = db.query(Incidente).filter(
+        Incidente.codigo == id_incidente
+    ).first()
+    if incidente_reasignado:
+        crear_notificacion(
+            db,
+            incidente_reasignado.codigo_usuario,
+            id_incidente,
+            f"Tu solicitud fue reenviada al taller {siguiente_taller['taller_nombre']}."
+        )
+
+    crear_notificacion(
+        db,
+        siguiente_taller["id_usuario_taller"],
+        id_incidente,
+        f"Nueva solicitud de emergencia asignada a tu taller: incidente {id_incidente}."
+    )
+
     db.commit()
 
     return {
@@ -521,7 +681,9 @@ def rechazar_asignacion(
         "nuevo_taller": {
             "id_taller": siguiente_taller["id_taller"],
             "nombre": siguiente_taller["taller_nombre"],
-            "distancia_km": float(siguiente_taller["distancia_km"])
+            "distancia_km": float(siguiente_taller["distancia_km"]),
+            "radio_cobertura_km": float(siguiente_taller["radio_cobertura_km"]),
+            "dentro_cobertura": True
         },
         "nueva_asignacion": nueva_asignacion["id"]
     }
@@ -529,9 +691,11 @@ def rechazar_asignacion(
 @router.get("/taller/{id_taller}")
 def asignaciones_del_taller(
     id_taller: int,
+    usuario: Usuario = Depends(get_current_usuario),
     db: Session = Depends(get_db)
 ):
     """Lista las asignaciones activas de un taller"""
+    validar_acceso_taller(usuario, db, id_taller)
 
     # ❌ ANTES:
     # asignaciones = db.query(Asignacion).filter(
@@ -543,7 +707,7 @@ def asignaciones_del_taller(
     # 1 pendiente, 2 aceptada, 4 asignada a técnico, 5 en camino
     asignaciones = db.query(Asignacion).filter(
         Asignacion.id_taller == id_taller,
-        Asignacion.id_estado_asignacion.in_([1, 2, 4, 5,6])
+        Asignacion.id_estado_asignacion.in_([1, 2, 4, 5, 6, 9, 10, 11])
     ).order_by(Asignacion.fecha_asignacion.desc()).all()
 
     resultado = []
@@ -595,9 +759,13 @@ def asignar_tecnico_a_asignacion(
     id_asignacion: int,
     datos: AsignarTecnicoRequest,
     request: Request,
+    usuario: Usuario = Depends(get_current_usuario),
     db: Session = Depends(get_db)
 ):
     asignacion = db.query(Asignacion).filter(Asignacion.id == id_asignacion).first()
+    if asignacion:
+        validar_acceso_asignacion_taller(usuario, db, asignacion)
+
     if not asignacion:
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
 
@@ -624,6 +792,12 @@ def asignar_tecnico_a_asignacion(
     asignacion.observacion = datos.observacion
 
     tecnico.disponibilidad = False
+    notificar_cambio_asignacion(
+        db,
+        asignacion,
+        f"Se asigno el tecnico {tecnico.nombre} a tu servicio.",
+        f"Se asigno el tecnico {tecnico.nombre} al incidente {asignacion.id_incidente}."
+    )
 
     registrar_bitacora(
         db=db,
@@ -647,9 +821,13 @@ def asignar_tecnico_a_asignacion(
 def iniciar_ruta(
     id_asignacion: int ,
     request : Request,
+    tecnico_actual: Tecnico = Depends(get_current_tecnico),
     db: Session= Depends(get_db)
 ): 
     asignacion = db.query(Asignacion).filter(Asignacion.id == id_asignacion).first() 
+    if asignacion and asignacion.id_tecnico != tecnico_actual.codigo:
+        raise HTTPException(status_code=403, detail="Solo el tecnico asignado puede iniciar ruta")
+
     if not asignacion: 
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
     if asignacion.id_estado_asignacion != 4:
@@ -663,6 +841,13 @@ def iniciar_ruta(
     if incidente: 
         #ajusta este numero segun tu catologo de estado de incidente
         incidente.id_estado_incidente=2
+
+    notificar_cambio_asignacion(
+        db,
+        asignacion,
+        "El tecnico esta en camino a tu ubicacion.",
+        f"El tecnico {asignacion.id_tecnico} inicio ruta para la asignacion {asignacion.id}."
+    )
 
     registrar_bitacora(
         db=db,
@@ -687,11 +872,15 @@ def iniciar_ruta(
 def finalizar_servicio(
     id_asignacion: int,
     request: Request,
+    tecnico_actual: Tecnico = Depends(get_current_tecnico),
     db: Session = Depends(get_db)
 ):
     asignacion = db.query(Asignacion).filter(
         Asignacion.id == id_asignacion
     ).first()
+
+    if asignacion and asignacion.id_tecnico != tecnico_actual.codigo:
+        raise HTTPException(status_code=403, detail="Solo el tecnico asignado puede finalizar este servicio")
 
     if not asignacion:
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
@@ -720,6 +909,13 @@ def finalizar_servicio(
         # Ajusta este número según tu catálogo de estado_incidente
         incidente.id_estado_incidente = 4
         incidente.fecha_cierre = datetime.now()
+
+    notificar_cambio_asignacion(
+        db,
+        asignacion,
+        "Tu servicio fue finalizado. Ya puedes revisar el pago o evaluar el servicio.",
+        f"El tecnico {asignacion.id_tecnico} finalizo la asignacion {asignacion.id}."
+    )
 
     registrar_bitacora(
         db=db,

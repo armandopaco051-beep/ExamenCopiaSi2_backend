@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from ipaddress import ip_address
-from typing import Optional
+from typing import List, Optional
 
 from jose import jwt, JWTError
 from pwdlib import PasswordHash
