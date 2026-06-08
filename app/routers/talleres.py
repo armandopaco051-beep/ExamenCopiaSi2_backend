@@ -19,11 +19,15 @@ from app.schemas.taller import (
 router = APIRouter(prefix="/talleres", tags=["Talleres"])
 
 
+# Valida que el usuario sea administrador de la plataforma
+# Caso de uso: Control de acceso para operaciones administrativas
 def validar_admin_global(usuario: Usuario):
     if usuario.id_rol != 1:
         raise HTTPException(status_code=403, detail="Solo el administrador puede realizar esta accion")
 
 
+# Obtiene un taller validando que el usuario tenga acceso al mismo
+# Caso de uso: Control de acceso para operaciones de taller
 def obtener_taller_autorizado(
     db: Session,
     codigo: int,
@@ -59,6 +63,8 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2) -> float:
     return radio_tierra_km * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+# Crea un nuevo taller en el sistema
+# Caso de uso: Creación de taller por administrador
 @router.post("", response_model=TallerResponse, status_code=201)
 def crear_taller(
     datos: TallerCreate,
@@ -73,6 +79,8 @@ def crear_taller(
     return nuevo
 
 
+# Lista los talleres según el rol del usuario (todos para admin, solo el propio para admin_taller)
+# Caso de uso: Consulta de talleres
 @router.get("", response_model=List[TallerResponse])
 def listar_talleres(
     usuario: Usuario = Depends(get_current_usuario),
@@ -88,6 +96,8 @@ def listar_talleres(
     raise HTTPException(status_code=403, detail="No autorizado")
 
 
+# Obtiene un taller específico por su código
+# Caso de uso: Consulta de taller por ID
 @router.get("/{codigo}", response_model=TallerResponse)
 def obtener_taller(
     codigo: int,
@@ -97,6 +107,8 @@ def obtener_taller(
     return obtener_taller_autorizado(db, codigo, usuario)
 
 
+# Obtiene la información de cobertura de un taller
+# Caso de uso: Consulta de cobertura de taller
 @router.get("/{codigo}/cobertura", response_model=CoberturaResponse)
 def obtener_cobertura_taller(
     codigo: int,
@@ -114,6 +126,8 @@ def obtener_cobertura_taller(
     }
 
 
+# Actualiza el radio de cobertura de un taller
+# Caso de uso: Actualización de cobertura de taller
 @router.put("/{codigo}/cobertura", response_model=CoberturaResponse)
 def actualizar_cobertura_taller(
     codigo: int,
@@ -136,6 +150,8 @@ def actualizar_cobertura_taller(
     }
 
 
+# Verifica si una coordenada está dentro del radio de cobertura de un taller
+# Caso de uso: Verificación de cobertura para asignación
 @router.get("/{codigo}/cobertura/verificar", response_model=VerificarCoberturaResponse)
 def verificar_cobertura_taller(
     codigo: int,
@@ -159,6 +175,8 @@ def verificar_cobertura_taller(
     }
 
 
+# Actualiza los datos de un taller
+# Caso de uso: Actualización de información de taller
 @router.put("/{codigo}", response_model=TallerResponse)
 def actualizar_taller(
     codigo: int,
@@ -181,6 +199,8 @@ def actualizar_taller(
     return t
 
 
+# Desactiva un taller (no lo elimina, solo marca como inactivo)
+# Caso de uso: Desactivación de taller por administrador
 @router.delete("/{codigo}")
 def desactivar_taller(
     codigo: int,

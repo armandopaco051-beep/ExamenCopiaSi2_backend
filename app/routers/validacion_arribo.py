@@ -30,14 +30,20 @@ class ValidarArriboRequest(BaseModel):
     longitud: float | None = None
 
 
+# Genera un PIN numérico de 6 dígitos para validación de arribo
+# Caso de uso: Generación de códigos de validación
 def generar_pin() -> str:
     return f"{secrets.randbelow(1000000):06d}"
 
 
+# Genera un token seguro para validación por QR
+# Caso de uso: Generación de tokens QR
 def generar_qr_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+# Obtiene la asignación en estado 'en camino' para un incidente
+# Caso de uso: Búsqueda de asignación activa para validación
 def obtener_asignacion_en_camino_por_incidente(db: Session, id_incidente: int):
     return db.query(Asignacion).filter(
         Asignacion.id_incidente == id_incidente,
@@ -45,6 +51,8 @@ def obtener_asignacion_en_camino_por_incidente(db: Session, id_incidente: int):
     ).order_by(Asignacion.fecha_asignacion.desc()).first()
 
 
+# Obtiene una validación de arribo activa y no expirada para una asignación
+# Caso de uso: Búsqueda de validación vigente
 def obtener_validacion_activa(db: Session, id_asignacion: int):
     ahora = datetime.now()
     return db.query(ValidacionArribo).filter(
@@ -54,6 +62,8 @@ def obtener_validacion_activa(db: Session, id_asignacion: int):
     ).order_by(ValidacionArribo.fecha_generacion.desc()).first()
 
 
+# Crea una nueva validación de arribo con PIN y QR token
+# Caso de uso: Generación de códigos de validación
 def crear_validacion(db: Session, asignacion: Asignacion):
     ahora = datetime.now()
     validacion = ValidacionArribo(
@@ -72,6 +82,8 @@ def crear_validacion(db: Session, asignacion: Asignacion):
     return validacion
 
 
+# Serializa una validación de arribo a formato JSON
+# Caso de uso: Normalización de datos de validación
 def serializar_validacion(validacion: ValidacionArribo):
     return {
         "id_validacion": validacion.id,
@@ -86,6 +98,8 @@ def serializar_validacion(validacion: ValidacionArribo):
     }
 
 
+# Valida que el técnico esté dentro del radio máximo de distancia para validar arribo
+# Caso de uso: Validación geográfica de arribo
 def validar_ubicacion_arribo(
     incidente: Incidente,
     id_incidente: int,
@@ -129,6 +143,8 @@ def validar_ubicacion_arribo(
     }
 
 
+# Genera o recupera el PIN/QR de validación para que el cliente lo comparta con el técnico
+# Caso de uso: Generación de código de validación para cliente
 @router.get("/incidente/{id_incidente}/codigo")
 def obtener_codigo_arribo_cliente(
     id_incidente: int,
@@ -152,6 +168,8 @@ def obtener_codigo_arribo_cliente(
     return serializar_validacion(validacion)
 
 
+# Valida el arribo del técnico usando PIN o QR y verifica su ubicación
+# Caso de uso: Validación de arribo por técnico
 @router.post("/asignacion/{id_asignacion}/validar")
 def validar_arribo_tecnico(
     id_asignacion: int,

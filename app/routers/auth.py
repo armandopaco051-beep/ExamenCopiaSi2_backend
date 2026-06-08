@@ -24,6 +24,8 @@ router = APIRouter(prefix="/auth", tags=["Autenticación - CU01 al CU04"])
 
 
 
+# Construye la respuesta del usuario con su rol y permisos asociados
+# Caso de uso: Helper function para normalizar respuestas de usuario
 def build_usuario_response(usuario : Usuario, db :Session) -> dict : 
     "Construye la respuesta del usuario con rol y permisos "
     permisos  = get_permisos_usuario(db,usuario.id_rol)
@@ -42,8 +44,8 @@ def build_usuario_response(usuario : Usuario, db :Session) -> dict :
 
     }
 
-# CU-01 Registrar usuario
-
+# Registra un nuevo usuario en el sistema con validaciones de CI y email únicos
+# Caso de uso: CU-01 Registrar usuario
 @router.post("/registro", response_model=UsuarioResponse, status_code=201)
 def registrar_usuario(datos: UsuarioCreate,request : Request ,db: Session = Depends(get_db)):
       # Verificar CI único
@@ -90,8 +92,8 @@ def registrar_usuario(datos: UsuarioCreate,request : Request ,db: Session = Depe
 
 
 
-# CU-02 Login
-
+# Autentica un usuario o técnico en el sistema y genera un token de acceso
+# Caso de uso: CU-02 Login
 @router.post("/login", response_model=Token)
 def login(datos: LoginRequest, request: Request, db: Session = Depends(get_db)):
     identificador = datos.identificador.strip()
@@ -216,8 +218,8 @@ def login(datos: LoginRequest, request: Request, db: Session = Depends(get_db)):
     raise HTTPException(status_code=401, detail="Credenciales incorrectas")
 
 
-# CU-03 Recuperar contraseña
-
+# Inicia el proceso de recuperación de contraseña enviando un correo al usuario
+# Caso de uso: CU-03 Recuperar contraseña
 @router.post("/recuperar-password")
 def recuperar_password(datos: RecuperarPasswordRequest, db: Session = Depends(get_db)):
     usuario = db.query(Usuario).filter(Usuario.email == datos.email).first()
@@ -225,7 +227,8 @@ def recuperar_password(datos: RecuperarPasswordRequest, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="No existe cuenta con ese email")
     return {"mensaje": f"Correo de recuperación enviado a {datos.email}"}
 
-# CU-03 Cambiar contraseña
+# Permite al usuario cambiar su contraseña después de validar la nueva contraseña
+# Caso de uso: CU-03 Cambiar contraseña
 @router.put("/cambiar-password")
 def cambiar_password(datos: CambiarPasswordRequest, db: Session = Depends(get_db)):
     if datos.new_password != datos.confirm_password:
@@ -242,13 +245,14 @@ def cambiar_password(datos: CambiarPasswordRequest, db: Session = Depends(get_db
 
 
 
-# CU-04 Cerrar sesión
-
+# Cierra la sesión del usuario actual
+# Caso de uso: CU-04 Cerrar sesión
 @router.post("/logout")
 def logout():
     return {"mensaje": "Sesión cerrada correctamente"}
 
- # el admin_crea un usuario en gestion de usuario 
+# Permite al administrador de la plataforma crear un usuario con rol de admin_taller
+# Caso de uso: Gestión de usuarios por administrador de plataforma
 @router.post("/registro-admin-taller/usuario")
 def registrar_usuario_admin_taller(datos: dict, db: Session = Depends(get_db)):
     existe = db.query(Usuario).filter(Usuario.codigo == datos["codigo"]).first()
@@ -276,7 +280,8 @@ def registrar_usuario_admin_taller(datos: dict, db: Session = Depends(get_db)):
         "codigo_usuario": nuevo_usuario.codigo
     }
     
-# el admin_crea un taller en gestion de taller 
+# Permite al administrador de la plataforma crear un taller y vincularlo a un usuario admin_taller
+# Caso de uso: Gestión de talleres por administrador de plataforma
 @router.post("/registro-admin-taller/taller/{codigo_usuario}")
 def registrar_taller_para_admin(
     codigo_usuario: str,
@@ -310,7 +315,8 @@ def registrar_taller_para_admin(
         "codigo_usuario": codigo_usuario
     }
 
-# LOGIN PARA ANGULAR / FRONTEND
+# Login especial para Swagger/Angular frontend usando OAuth2PasswordRequestForm
+# Caso de uso: Autenticación para documentación Swagger y frontend Angular
 @router.post("/token")
 def login_swagger(
     form_data: OAuth2PasswordRequestForm = Depends(),

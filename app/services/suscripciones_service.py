@@ -73,6 +73,14 @@ def validar_suscripcion_activa_taller(db: Session, id_taller: int):
     return tenant, suscripcion
 
 
+def validar_taller_operativo(db: Session, id_taller: int):
+    tenant, suscripcion = validar_suscripcion_activa_taller(db, id_taller)
+    cuotas = calcular_cuotas_tenant(db, tenant)
+    if cuotas["excedidos"].get("talleres"):
+        raise HTTPException(status_code=403, detail="El tenant excedio el limite de talleres de su plan")
+    return tenant, suscripcion
+
+
 def calcular_cuotas_tenant(db: Session, tenant: Tenant):
     suscripcion = obtener_suscripcion_actual(db, tenant.id)
     if not suscripcion:
@@ -142,5 +150,38 @@ def validar_limite_tecnicos(db: Session, id_taller: int):
         raise HTTPException(
             status_code=403,
             detail=f"Has alcanzado el limite de tecnicos de tu plan ({plan.limite_tecnicos})"
+        )
+    return tenant, suscripcion
+
+
+def validar_limite_incidentes_mensuales(db: Session, id_taller: int):
+    tenant, suscripcion = validar_suscripcion_activa_taller(db, id_taller)
+    plan = db.query(PlanSuscripcion).filter(PlanSuscripcion.id == suscripcion.id_plan).first()
+    total = db.query(Asignacion).filter(
+        Asignacion.id_taller == id_taller,
+        func.to_char(Asignacion.fecha_asignacion, "YYYY-MM") == periodo_actual()
+    ).count()
+    if plan and total >= plan.limite_incidentes_mensuales:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Has alcanzado el limite mensual de incidentes de tu plan ({plan.limite_incidentes_mensuales})"
+        )
+    return tenant, suscripcion
+
+
+def validar_limite_notificaciones(db: Session, id_taller: int):
+    tenant, suscripcion = validar_suscripcion_activa_taller(db, id_taller)
+    plan = db.query(PlanSuscripcion).filter(PlanSuscripcion.id == suscripcion.id_plan).first()
+    taller = db.query(Taller).filter(Taller.codigo == id_taller).first()
+    total = 0
+    if taller:
+        total = db.query(Notificacion).filter(
+            Notificacion.id_usuario == taller.usuario_id,
+            func.to_char(Notificacion.fecha_envio, "YYYY-MM") == periodo_actual()
+        ).count()
+    if plan and total >= plan.limite_notificaciones_push:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Has alcanzado el limite mensual de notificaciones de tu plan ({plan.limite_notificaciones_push})"
         )
     return tenant, suscripcion

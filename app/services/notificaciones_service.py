@@ -5,6 +5,21 @@ from sqlalchemy.orm import Session
 from app.models.notificaciones import Notificacion
 from app.models.operaciones import Asignacion, Incidente
 from app.models.talleres import Taller
+from app.services.notificaciones_realtime import emitir_notificacion_realtime
+
+
+def serializar_notificacion_realtime(notificacion: Notificacion):
+    return {
+        "evento": "notificacion_nueva",
+        "notificacion": {
+            "codigo": notificacion.codigo,
+            "fecha_envio": notificacion.fecha_envio.isoformat() if notificacion.fecha_envio else None,
+            "mensaje": notificacion.mensaje,
+            "leido": notificacion.leido,
+            "id_usuario": notificacion.id_usuario,
+            "id_incidente": notificacion.id_incidente,
+        }
+    }
 
 
 def crear_notificacion(
@@ -13,7 +28,7 @@ def crear_notificacion(
     id_incidente: int | None,
     mensaje: str
 ):
-    if not id_usuario or not id_incidente:
+    if not id_usuario:
         return None
 
     notificacion = Notificacion(
@@ -24,6 +39,11 @@ def crear_notificacion(
         id_incidente=id_incidente
     )
     db.add(notificacion)
+    db.flush()
+    emitir_notificacion_realtime(
+        id_usuario,
+        serializar_notificacion_realtime(notificacion)
+    )
     return notificacion
 
 

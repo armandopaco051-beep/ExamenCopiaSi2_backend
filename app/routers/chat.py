@@ -23,6 +23,8 @@ class MensajeChatRequest(BaseModel):
     tipo_mensaje: str = "texto"
 
 
+# Gestiona las conexiones WebSocket activas para el chat en tiempo real
+# Caso de uso: Comunicación bidireccional entre cliente y técnico
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[int, List[WebSocket]] = {}
@@ -46,6 +48,8 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+# Serializa un mensaje de chat a formato JSON para respuesta
+# Caso de uso: Normalización de datos de mensajes
 def serializar_mensaje(mensaje: MensajeChat):
     return {
         "id": mensaje.id,
@@ -60,6 +64,8 @@ def serializar_mensaje(mensaje: MensajeChat):
     }
 
 
+# Obtiene la asignación activa de un incidente para habilitar el chat
+# Caso de uso: Verificar disponibilidad de chat para un incidente
 def obtener_asignacion_chat(db: Session, id_incidente: int):
     return db.query(Asignacion).filter(
         Asignacion.id_incidente == id_incidente,
@@ -67,6 +73,8 @@ def obtener_asignacion_chat(db: Session, id_incidente: int):
     ).order_by(Asignacion.fecha_asignacion.desc()).first()
 
 
+# Obtiene un chat existente o crea uno nuevo para el incidente
+# Caso de uso: Gestión de chats por incidente
 def obtener_o_crear_chat(db: Session, id_incidente: int):
     chat = db.query(ChatIncidente).filter(
         ChatIncidente.id_incidente == id_incidente
@@ -86,6 +94,8 @@ def obtener_o_crear_chat(db: Session, id_incidente: int):
     return chat
 
 
+# Valida que el chat esté activo para el incidente (técnico asignado y servicio activo)
+# Caso de uso: Validación de disponibilidad de chat
 def validar_chat_activo(db: Session, id_incidente: int):
     incidente = db.query(Incidente).filter(Incidente.codigo == id_incidente).first()
     if not incidente:
@@ -101,6 +111,8 @@ def validar_chat_activo(db: Session, id_incidente: int):
     return incidente, asignacion
 
 
+# Identifica al participante del chat a partir del token JWT
+# Caso de uso: Autenticación y autorización para acceso al chat
 def obtener_participante_desde_token(db: Session, token: str, id_incidente: int, permitir_admin: bool = False):
     payload = decode_token(token)
     if not payload:
@@ -141,6 +153,8 @@ def obtener_participante_desde_token(db: Session, token: str, id_incidente: int,
     raise HTTPException(status_code=403, detail="No tienes permiso para acceder a este chat")
 
 
+# Guarda un mensaje en el chat del incidente
+# Caso de uso: Envío de mensajes en el chat
 def guardar_mensaje(
     db: Session,
     id_incidente: int,
@@ -172,6 +186,8 @@ def guardar_mensaje(
     return mensaje
 
 
+# Lista todos los mensajes del chat de un incidente
+# Caso de uso: Consulta de historial de chat
 @router.get("/incidentes/{id_incidente}/mensajes")
 def listar_mensajes_chat(
     id_incidente: int,
@@ -203,6 +219,8 @@ def listar_mensajes_chat(
     }
 
 
+# Envía un mensaje al chat mediante HTTP (para clientes sin WebSocket)
+# Caso de uso: Envío de mensajes vía HTTP
 @router.post("/incidentes/{id_incidente}/mensajes")
 async def enviar_mensaje_chat_http(
     id_incidente: int,
@@ -227,6 +245,8 @@ async def enviar_mensaje_chat_http(
     return data
 
 
+# Endpoint WebSocket para comunicación en tiempo real del chat
+# Caso de uso: Chat en tiempo real entre cliente y técnico
 @router.websocket("/ws/incidentes/{id_incidente}")
 async def websocket_chat_incidente(websocket: WebSocket, id_incidente: int):
     token = websocket.query_params.get("token")

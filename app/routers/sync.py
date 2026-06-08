@@ -17,6 +17,8 @@ router = APIRouter(prefix="/sync", tags=["Sincronizacion Offline"])
 ACCIONES_RESOLUCION = {"CONSERVAR_SERVIDOR", "CREAR_NUEVO", "FUSIONAR_EVIDENCIAS", "DESCARTAR_LOCAL"}
 
 
+# Calcula la distancia en kilómetros entre dos coordenadas usando fórmula Haversine
+# Caso de uso: Detección de duplicados por cercanía geográfica
 def distancia_km(lat1, lon1, lat2, lon2) -> float:
     radio_tierra_km = 6371
     d_lat = radians(float(lat2) - float(lat1))
@@ -30,6 +32,8 @@ def distancia_km(lat1, lon1, lat2, lon2) -> float:
     return radio_tierra_km * 2 * atan2(sqrt(a), sqrt(1 - a))
 
 
+# Serializa un conflicto de sincronización a formato JSON
+# Caso de uso: Normalización de datos de conflictos de sincronización
 def serializar_conflicto(conflicto: ConflictoSincronizacion):
     return {
         "id": conflicto.id,
@@ -49,6 +53,8 @@ def serializar_conflicto(conflicto: ConflictoSincronizacion):
     }
 
 
+# Busca un conflicto pendiente de sincronización para un incidente local
+# Caso de uso: Verificación de conflictos existentes antes de sincronizar
 def buscar_conflicto_pendiente(db: Session, datos: SyncIncidenteRequest):
     return db.query(ConflictoSincronizacion).filter(
         ConflictoSincronizacion.codigo_usuario == datos.codigo_usuario,
@@ -57,6 +63,8 @@ def buscar_conflicto_pendiente(db: Session, datos: SyncIncidenteRequest):
     ).first()
 
 
+# Busca posibles incidentes duplicados basándose en usuario, vehículo, tiempo y ubicación
+# Caso de uso: Detección de duplicados en sincronización offline
 def buscar_posible_duplicado(db: Session, datos: SyncIncidenteRequest):
     desde = datos.fecha_reporte - timedelta(hours=2)
     hasta = datos.fecha_reporte + timedelta(hours=2)
@@ -75,6 +83,8 @@ def buscar_posible_duplicado(db: Session, datos: SyncIncidenteRequest):
     return None
 
 
+# Crea un conflicto de sincronización entre datos locales y del servidor
+# Caso de uso: Registro de conflictos para arbitraje manual
 def crear_conflicto(db: Session, datos: SyncIncidenteRequest, incidente_backend: Incidente):
     tipo = "POSIBLE_DUPLICADO"
     regla = "RA2_NO_DUPLICAR_INCIDENTE"
@@ -98,6 +108,8 @@ def crear_conflicto(db: Session, datos: SyncIncidenteRequest, incidente_backend:
     return conflicto
 
 
+# Sincroniza un incidente creado offline con el servidor
+# Caso de uso: Sincronización de incidentes offline con detección de conflictos
 @router.post("/incidentes")
 def sincronizar_incidente(
     datos: SyncIncidenteRequest,
@@ -154,6 +166,8 @@ def sincronizar_incidente(
     }
 
 
+# Lista los conflictos de sincronización con filtros opcionales
+# Caso de uso: Consulta de conflictos de sincronización
 @router.get("/conflictos")
 def listar_conflictos(
     estado: str = "PENDIENTE",
@@ -169,6 +183,8 @@ def listar_conflictos(
     return [serializar_conflicto(conflicto) for conflicto in conflictos]
 
 
+# Lista los conflictos pendientes de arbitraje
+# Caso de uso: Consulta de conflictos pendientes para administrador
 @router.get("/pendientes")
 def listar_pendientes_arbitraje(db: Session = Depends(get_db)):
     conflictos = db.query(ConflictoSincronizacion).filter(
@@ -177,6 +193,8 @@ def listar_pendientes_arbitraje(db: Session = Depends(get_db)):
     return [serializar_conflicto(conflicto) for conflicto in conflictos]
 
 
+# Resuelve un conflicto de sincronización según la acción especificada
+# Caso de uso: Arbitraje manual de conflictos de sincronización
 @router.post("/resolver-conflicto/{id_conflicto}")
 def resolver_conflicto(
     id_conflicto: int,

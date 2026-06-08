@@ -14,6 +14,8 @@ from app.routers.tecnicos import get_current_usuario
 router = APIRouter(prefix="/bitacora", tags=["Bitácora"])
 
 
+# Lista los registros de bitácora con filtros por módulo, usuario, técnico o taller
+# Caso de uso: Auditoría y seguimiento de acciones en el sistema
 @router.get("", response_model=List[BitacoraResponse])
 def listar_bitacora(
     modulo: Optional[str] = None,

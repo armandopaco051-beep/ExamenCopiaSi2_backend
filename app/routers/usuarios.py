@@ -15,6 +15,8 @@ router = APIRouter(prefix="/usuarios", tags=["Usuarios"])
 roles_router = APIRouter(prefix="/roles", tags=["Roles"])
 permisos_router = APIRouter(prefix="/permisos", tags=["Permisos"])
 
+# Construye la respuesta de usuario con sus permisos
+# Caso de uso: Normalización de datos de usuario con permisos
 def build_response(usuario: Usuario, db : Session) -> dict: 
     permisos  = get_permisos_usuario(db, usuario.id_rol) 
     return {
@@ -30,7 +32,8 @@ def build_response(usuario: Usuario, db : Session) -> dict:
         "permisos": permisos
     }
 
-# CU-05 VER PERFIL 
+# Obtiene un usuario específico por su código
+# Caso de uso: CU-05 Ver perfil de usuario
 @router.get("/{codigo}", response_model = UsuarioResponse)
 def obtener_usuario(codigo : str , deb :Session = Depends(get_db)):
     usuario = deb.query(Usuario).filter(Usuario.codigo == codigo).first()
@@ -38,7 +41,8 @@ def obtener_usuario(codigo : str , deb :Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return usuario
 
-#CU-05 ACTUALIZAR EL PERFIL 
+# Actualiza los datos de un usuario
+# Caso de uso: CU-05 Actualizar perfil de usuario
 @router.put ("/{codigo}", response_model = UsuarioResponse)
 def actualizar_usuario(codigo: str , datos : UsuarioUpdate, db : Session = Depends(get_db)):
     usuario = db.query(Usuario).filter(Usuario.codigo == codigo).first()
@@ -54,13 +58,14 @@ def actualizar_usuario(codigo: str , datos : UsuarioUpdate, db : Session = Depen
     db.refresh(usuario)
     return usuario
 
-# Listar Todos 
-
+# Lista todos los usuarios del sistema
+# Caso de uso: Consulta general de usuarios
 @router.get("/", response_model = List[UsuarioResponse])
 def listar_usuarios(db:Session = Depends(get_db)):
     return db.query(Usuario).all()
 
-# Desactivar
+# Desactiva un usuario del sistema
+# Caso de uso: Desactivación de usuario
 @router.delete("/{codigo}")
 def desactivar_usuario(codigo: str, db : Session = Depends(get_db)):
     usuario = db.query(Usuario).filter(Usuario.codigo == codigo).first()
@@ -72,7 +77,8 @@ def desactivar_usuario(codigo: str, db : Session = Depends(get_db)):
     # db.refresh(usuario)
     return {"mensaje:" "Usuario Desactivado"}
 
-#cambiar de rol a un usuario
+# Cambia el rol de un usuario
+# Caso de uso: Gestión de roles de usuarios
 @router.put("/{codigo}/rol")
 def cambiar_rol_usuario(
     codigo: str,
@@ -95,11 +101,13 @@ def cambiar_rol_usuario(
 }
 
 
-# CU-06 GESTIONAR ROLES 
+# Lista todos los roles del sistema
+# Caso de uso: CU-06 Gestionar roles - Consulta
 @roles_router.get("/", response_model=List[RolResponse])
 def listar_roles(db : Session = Depends(get_db)):
     return db.query(Rol).all()
-# nuevo 
+# Crea un nuevo rol en el sistema
+# Caso de uso: CU-06 Gestionar roles - Creación
 @roles_router.post ("/", response_model=RolResponse)
 def crear_rol(datos: RolCreate, db: Session = Depends(get_db)):
     nuevo = Rol(nombre = datos.nombre)
@@ -110,6 +118,8 @@ def crear_rol(datos: RolCreate, db: Session = Depends(get_db)):
 
 
 
+# Elimina un rol del sistema
+# Caso de uso: CU-06 Gestionar roles - Eliminación
 @roles_router.delete("/{id_rol}")
 def eliminar_rol(id_rol: int , db : Session = Depends(get_db)):
     rol = db.query(Rol).filter(Rol.id == id_rol).first()
@@ -119,8 +129,8 @@ def eliminar_rol(id_rol: int , db : Session = Depends(get_db)):
     db.commit()
     return {"mensaje": "Rol eliminado"}
 
-#permisos de rol
-# hace consulta para obtener los permisos de un rol
+# Obtiene los permisos asignados a un rol
+# Caso de uso: Consulta de permisos por rol
 @roles_router.get("/{id_rol}/permisos", response_model=List[PermisoResponse])
 def permisos_del_rol(id_rol: int, db: Session = Depends(get_db)):
     permisos = (
@@ -131,7 +141,8 @@ def permisos_del_rol(id_rol: int, db: Session = Depends(get_db)):
     )
     return permisos
 
-#agregar permiso rol
+# Agrega un permiso a un rol
+# Caso de uso: Asignación de permisos a roles
 def agregar_permiso_rol(
     id_rol: int,
     datos: AsignarPermisoRequest,
@@ -147,7 +158,8 @@ def agregar_permiso_rol(
     db.commit()
     return {"mensaje": "Permiso agregado al rol"
 }
-# quitar permiso de rol
+# Quita un permiso de un rol
+# Caso de uso: Revocación de permisos de roles
 @roles_router.delete("/{id_rol}/permisos/{id_permiso}")
 def quitar_permiso_rol(
     id_rol: int,
@@ -166,11 +178,14 @@ def quitar_permiso_rol(
 
 
 
-# CU-07 GESTIONAR PERMISOS
+# Lista todos los permisos del sistema
+# Caso de uso: CU-07 Gestionar permisos - Consulta
 @permisos_router.get("/", response_model=List[PermisoResponse])
 def listar_permisos(db: Session = Depends(get_db)):
     return db.query(Permiso).all()
 
+# Crea un nuevo permiso en el sistema
+# Caso de uso: CU-07 Gestionar permisos - Creación
 @permisos_router.post("/", response_model=PermisoResponse)
 def crear_permiso(datos: PermisoCreate, db: Session = Depends(get_db)):
     nuevo = Permiso(nombre=datos.nombre)
@@ -179,6 +194,8 @@ def crear_permiso(datos: PermisoCreate, db: Session = Depends(get_db)):
     db.refresh(nuevo)
     return nuevo
 
+# Asigna un permiso a un rol
+# Caso de uso: Asignación de permisos
 @permisos_router.post("/{id_rol}/asignar/{id_permiso}")
 def asignar_permiso(id_rol: int, id_permiso: int, db: Session = Depends(get_db)):
     existe = db.query(RolPermiso).filter(
@@ -190,7 +207,8 @@ def asignar_permiso(id_rol: int, id_permiso: int, db: Session = Depends(get_db))
     db.add(RolPermiso(id_rol=id_rol, id_permiso=id_permiso))
     db.commit()
     return {"mensaje": "Permiso asignado correctamente"}
-# eliminar permiso
+# Elimina un permiso del sistema
+# Caso de uso: CU-07 Gestionar permisos - Eliminación
 @permisos_router.delete("/{id_permiso}")
 def eliminar_permiso(id_permiso: int, db: Session = Depends(get_db)):
     p = db.query(Permiso).filter(Permiso.id == id_permiso).first()

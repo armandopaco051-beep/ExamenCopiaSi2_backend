@@ -9,6 +9,7 @@ from app.models.talleres import Taller, Tecnico
 from app.services.auth_service import registrar_bitacora
 from app.routers.tecnicos import get_current_usuario, get_current_tecnico, get_taller_admin
 from app.services.notificaciones_service import crear_notificacion, notificar_cambio_asignacion
+from app.services.suscripciones_service import validar_limite_incidentes_mensuales, validar_taller_operativo
 import math
 from app.schemas.asignacion import ResponderAsignacion, AsignacionCreate, AsignarTecnicoRequest
 from sqlalchemy import text
@@ -16,6 +17,8 @@ from app.models.seguridad import Usuario
 router =  APIRouter(prefix="/asignacion", tags=["Asignacion"])
 
 
+# Valida que el usuario tenga acceso a operar sobre un taller específico
+# Caso de uso: Control de acceso para administradores y administradores de taller
 def validar_acceso_taller(usuario: Usuario, db: Session, id_taller: int):
     if usuario.id_rol == 1:
         return
@@ -28,9 +31,13 @@ def validar_acceso_taller(usuario: Usuario, db: Session, id_taller: int):
     raise HTTPException(status_code=403, detail="No autorizado para operar sobre este taller")
 
 
+# Valida que el usuario tenga acceso a operar sobre una asignación específica
+# Caso de uso: Control de acceso para operaciones sobre asignaciones
 def validar_acceso_asignacion_taller(usuario: Usuario, db: Session, asignacion: Asignacion):
     validar_acceso_taller(usuario, db, asignacion.id_taller)
 
+# Calcula la distancia en kilómetros entre dos coordenadas usando la fórmula de Haversine
+# Caso de uso: Motor de asignación inteligente para determinar talleres cercanos
 def calcular_distancia(lat1, lon1, lat2, lon2) -> float:
     """Distancia en km con fórmula de Haversine"""
     R = 6371
@@ -43,10 +50,14 @@ def calcular_distancia(lat1, lon1, lat2, lon2) -> float:
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+# Obtiene el radio de cobertura de un taller en kilómetros
+# Caso de uso: Motor de asignación inteligente para verificar si un incidente está dentro del área de cobertura
 def obtener_radio_cobertura(taller: Taller) -> float:
     return float(taller.radio_cobertura_km or 10.0)
 
 
+# Calcula la distancia entre un taller y un incidente
+# Caso de uso: Motor de asignación inteligente para ordenar talleres por cercanía
 def calcular_distancia_taller_incidente(taller: Taller, incidente: Incidente) -> float:
     return calcular_distancia(
         incidente.latitud,
@@ -55,6 +66,8 @@ def calcular_distancia_taller_incidente(taller: Taller, incidente: Incidente) ->
         taller.longitud
     )
 # ✅ CAMBIO: busca el siguiente taller más cercano que todavía NO recibió ese incidente
+# Busca el siguiente taller más cercano disponible que aún no haya recibido el incidente
+# Caso de uso: CU-17 Motor de asignación inteligente - Reasignación automática
 def asignar_siguiente_taller(db: Session, incidente: Incidente):
     """
     Busca el taller más cercano disponible que aún no haya recibido
@@ -134,6 +147,8 @@ def asignar_siguiente_taller(db: Session, incidente: Incidente):
 
     return nueva_asignacion
 
+# Obtiene la lista de talleres candidatos para atender un incidente con sus scores
+# Caso de uso: CU-17 Motor de asignación inteligente - Retorna lista de técnicos candidatos
 @router.get("/candidatos/{id_incidente}")
 def obtener_candidatos(id_incidente: int ,  db: Session = Depends(get_db)): 
     #Cu17 motor de asignacion inteligente retorna lista de tecnicos candidatos
@@ -193,6 +208,8 @@ def obtener_candidatos(id_incidente: int ,  db: Session = Depends(get_db)):
     "candidatos": candidatos[:5] #top 5 significa ? respuesta : los primeros 5 candidatos de la lista ordenada por score
     
     }
+# Crea una asignación automática enviando el incidente al taller más cercano disponible
+# Caso de uso: CU-17 Motor de asignación inteligente - Asignación automática de incidentes
 @router.post("/auto/{id_incidente}", status_code=201)
 def crear_asignacion_automatica(
     id_incidente: int,
@@ -330,6 +347,8 @@ def crear_asignacion_automatica(
         "id_estado_asignacion": nueva.id_estado_asignacion
     }
 
+# Crea una asignación manual de un técnico a una orden de trabajo
+# Caso de uso: CU-19 Asignar técnico a orden de trabajo
 @router.post("", status_code=201)
 def crear_asignacion(
     datos: AsignacionCreate,
@@ -400,6 +419,8 @@ def crear_asignacion(
     }
 
 
+# Permite que un taller acepte una solicitud de asignación pendiente
+# Caso de uso: Aceptación de solicitudes de emergencia por parte del taller
 @router.put("/{id_asignacion}/aceptar")
 def aceptar_asignacion(
     id_asignacion: int,
@@ -415,6 +436,8 @@ def aceptar_asignacion(
 
     if not asignacion:
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
+
+    validar_limite_incidentes_mensuales(db, asignacion.id_taller)
 
     if asignacion.id_estado_asignacion != 1:
         raise HTTPException(
@@ -445,6 +468,8 @@ def aceptar_asignacion(
         "estado": asignacion.id_estado_asignacion
     }
 
+# Busca el siguiente taller más cercano que no haya rechazado el incidente
+# Caso de uso: Reasignación automática cuando un taller rechaza una solicitud
 def buscar_siguiente_taller_para_incidente(
     db: Session,
     id_incidente: int
@@ -484,6 +509,8 @@ def buscar_siguiente_taller_para_incidente(
     return db.execute(sql, {"id_incidente": id_incidente}).mappings().first()
 
 
+# Busca el siguiente taller más cercano dentro del radio de cobertura que no haya rechazado el incidente
+# Caso de uso: Reasignación automática con filtro de cobertura geográfica
 def buscar_siguiente_taller_en_cobertura_para_incidente(
     db: Session,
     id_incidente: int
@@ -531,6 +558,8 @@ def buscar_siguiente_taller_en_cobertura_para_incidente(
     """)
 
     return db.execute(sql, {"id_incidente": id_incidente}).mappings().first()
+# Permite que un taller rechace una solicitud de asignación y la reenvía al siguiente taller cercano
+# Caso de uso: Rechazo de solicitudes de emergencia con reasignación automática
 @router.put("/{id_asignacion}/rechazar")
 def rechazar_asignacion(
     id_asignacion: int,
@@ -688,6 +717,8 @@ def rechazar_asignacion(
         "nueva_asignacion": nueva_asignacion["id"]
     }
     
+# Lista todas las asignaciones activas de un taller específico
+# Caso de uso: Gestión de solicitudes por parte del administrador del taller
 @router.get("/taller/{id_taller}")
 def asignaciones_del_taller(
     id_taller: int,
@@ -754,6 +785,8 @@ def asignaciones_del_taller(
 
     return resultado
 
+# Asigna un técnico específico a una asignación que ya fue aceptada por el taller
+# Caso de uso: Asignación de técnico a una solicitud aceptada
 @router.put("/{id_asignacion}/tecnico/{codigo_tecnico}")
 def asignar_tecnico_a_asignacion(
     id_asignacion: int,
@@ -768,6 +801,8 @@ def asignar_tecnico_a_asignacion(
 
     if not asignacion:
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
+
+    validar_taller_operativo(db, asignacion.id_taller)
 
     if asignacion.id_estado_asignacion != 2:
         raise HTTPException(
@@ -817,6 +852,8 @@ def asignar_tecnico_a_asignacion(
         "id_asignacion": asignacion.id,
         "id_tecnico": tecnico.codigo
     }
+# Permite que el técnico asignado inicie la ruta hacia la ubicación del cliente
+# Caso de uso: Inicio de ruta por parte del técnico asignado
 @router.put("/{id_asignacion}/iniciar-ruta")
 def iniciar_ruta(
     id_asignacion: int ,
@@ -830,6 +867,8 @@ def iniciar_ruta(
 
     if not asignacion: 
         raise HTTPException(status_code=404, detail="Asignación no encontrada")
+    validar_taller_operativo(db, asignacion.id_taller)
+
     if asignacion.id_estado_asignacion != 4:
         raise HTTPException(status_code=400, detail="La asignación no está en estado 'asignada_tecnico'")
     
@@ -868,6 +907,8 @@ def iniciar_ruta(
         "id_asignacion": asignacion.id
     }
 
+# Permite que el técnico finalice el servicio y marque la asignación como completada
+# Caso de uso: Finalización de servicio por parte del técnico
 @router.put("/{id_asignacion}/finalizar")
 def finalizar_servicio(
     id_asignacion: int,

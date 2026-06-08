@@ -13,11 +13,15 @@ from app.routers.tecnicos import get_current_usuario, get_taller_admin
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
+# Valida que el usuario sea administrador de la plataforma
+# Caso de uso: Control de acceso para dashboard global
 def validar_admin_global(usuario: Usuario):
     if usuario.id_rol != 1:
         raise HTTPException(status_code=403, detail="Solo el administrador puede consultar el dashboard global")
 
 
+# Obtiene el ID del taller autorizado para el usuario actual
+# Caso de uso: Control de acceso para dashboards de taller
 def obtener_id_taller_autorizado(id_taller: int, usuario: Usuario, db: Session) -> int:
     if usuario.id_rol == 1:
         return id_taller
@@ -31,11 +35,15 @@ def obtener_id_taller_autorizado(id_taller: int, usuario: Usuario, db: Session) 
     raise HTTPException(status_code=403, detail="No autorizado")
 
 
+# Retorna el nombre del día de la semana en español abreviado
+# Caso de uso: Formateo de fechas para dashboard
 def nombre_dia_es(fecha):
     dias = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
     return dias[fecha.weekday()]
 
 
+# Retorna el nombre de la categoría de problema basado en su código
+# Caso de uso: Normalización de categorías para dashboard
 def nombre_categoria(codigo: int) -> str:
     mapa = {
         1: "Batería",
@@ -47,6 +55,8 @@ def nombre_categoria(codigo: int) -> str:
     return mapa.get(codigo, "Otros")
 
 
+# Dashboard global para el administrador de la plataforma con estadísticas y tendencias
+# Caso de uso: CU-16 Dashboard para Admin Plataforma
 @router.get("/admin-plataforma")
 def dashboard_admin(
     usuario: Usuario = Depends(get_current_usuario),
@@ -178,6 +188,8 @@ def dashboard_admin(
     }
 
 
+# Construye el dashboard específico para un taller con sus estadísticas
+# Caso de uso: CU-16 Dashboard para Admin Taller
 def construir_dashboard_taller(id_taller: int, db: Session):
     """CU-16: Dashboard para Admin Taller"""
 
@@ -247,6 +259,8 @@ def construir_dashboard_taller(id_taller: int, db: Session):
     }
 
 
+# Dashboard para un taller específico (acceso para admin o admin_plataforma)
+# Caso de uso: CU-16 Dashboard para Admin Taller
 @router.get("/admin-taller/{id_taller}")
 def dashboard_taller(
     id_taller: int,
@@ -257,6 +271,8 @@ def dashboard_taller(
     return construir_dashboard_taller(id_taller_autorizado, db)
 
 
+# Dashboard del propio taller del usuario admin_taller
+# Caso de uso: CU-16 Dashboard para Admin Taller (vista propia)
 @router.get("/mi-taller")
 def dashboard_mi_taller(
     usuario: Usuario = Depends(get_current_usuario),

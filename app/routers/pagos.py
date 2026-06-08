@@ -18,6 +18,7 @@ from app.models.operaciones import (
 )
 from app.models.talleres import Taller, Tecnico
 from app.services.auth_service import decode_token, registrar_bitacora
+from app.services.suscripciones_service import validar_taller_operativo
 
 
 router = APIRouter(prefix="/pagos", tags=["Pagos y Comprobantes"])
@@ -44,10 +45,14 @@ class RegistrarPagoRequest(BaseModel):
     referencia_pago: str | None = None
 
 
+# Convierte un valor Decimal a float para respuesta JSON
+# Caso de uso: Normalización de valores monetarios
 def decimal_to_float(valor) -> float:
     return float(valor or 0)
 
 
+# Decodifica y valida el token JWT
+# Caso de uso: Autenticación para endpoints de pagos
 def obtener_payload(token: str):
     payload = decode_token(token)
     if not payload:
@@ -55,6 +60,8 @@ def obtener_payload(token: str):
     return payload
 
 
+# Obtiene el incidente y su asignación más reciente
+# Caso de uso: Validación de existencia de incidente y asignación
 def obtener_incidente_y_asignacion(db: Session, id_incidente: int):
     incidente = db.query(Incidente).filter(Incidente.codigo == id_incidente).first()
     if not incidente:
@@ -70,6 +77,8 @@ def obtener_incidente_y_asignacion(db: Session, id_incidente: int):
     return incidente, asignacion
 
 
+# Valida que el token pertenezca al técnico asignado al servicio
+# Caso de uso: Control de acceso para registro de conceptos de cobro
 def validar_tecnico_asignado(db: Session, token: str, asignacion: Asignacion):
     payload = obtener_payload(token)
     if payload.get("tipo") != "tecnico" or payload.get("sub") != asignacion.id_tecnico:
@@ -84,6 +93,8 @@ def validar_tecnico_asignado(db: Session, token: str, asignacion: Asignacion):
     return tecnico
 
 
+# Valida que el usuario sea el cliente propietario del incidente
+# Caso de uso: Control de acceso para operaciones de pago del cliente
 def validar_cliente_incidente(token: str, incidente: Incidente):
     payload = obtener_payload(token)
     if payload.get("tipo") != "usuario" or payload.get("rol") != 4 or payload.get("sub") != incidente.codigo_usuario:
@@ -94,6 +105,8 @@ def validar_cliente_incidente(token: str, incidente: Incidente):
     return payload
 
 
+# Valida que el usuario tenga permiso para consultar el pago (cliente, técnico o admin_taller)
+# Caso de uso: Control de acceso para consulta de pagos
 def validar_consulta_pago(db: Session, token: str, incidente: Incidente, asignacion: Asignacion):
     payload = obtener_payload(token)
     codigo = payload.get("sub")
@@ -114,6 +127,8 @@ def validar_consulta_pago(db: Session, token: str, incidente: Incidente, asignac
     raise HTTPException(status_code=403, detail="No tienes permiso para consultar este pago")
 
 
+# Obtiene un cobro existente o crea uno nuevo para el incidente
+# Caso de uso: Gestión de cobros de servicio
 def obtener_o_crear_cobro(db: Session, incidente: Incidente, asignacion: Asignacion):
     cobro = db.query(CobroServicio).filter(
         CobroServicio.id_incidente == incidente.codigo
@@ -136,6 +151,8 @@ def obtener_o_crear_cobro(db: Session, incidente: Incidente, asignacion: Asignac
     return cobro
 
 
+# Serializa un concepto de cobro a formato JSON
+# Caso de uso: Normalización de datos de conceptos de cobro
 def serializar_concepto(concepto: ConceptoCobro):
     return {
         "id": concepto.id,
@@ -149,6 +166,8 @@ def serializar_concepto(concepto: ConceptoCobro):
     }
 
 
+# Serializa un detalle de cobro a formato JSON
+# Caso de uso: Normalización de datos de detalles de cobro
 def serializar_detalle(detalle: DetalleCobro):
     return {
         "id": detalle.id,
@@ -162,6 +181,8 @@ def serializar_detalle(detalle: DetalleCobro):
     }
 
 
+# Serializa un cobro con sus detalles a formato JSON
+# Caso de uso: Normalización de datos de cobros
 def serializar_cobro(db: Session, cobro: CobroServicio):
     detalles = db.query(DetalleCobro).filter(
         DetalleCobro.id_cobro == cobro.id
@@ -183,10 +204,14 @@ def serializar_cobro(db: Session, cobro: CobroServicio):
     }
 
 
+# Genera un número único de comprobante de pago
+# Caso de uso: Generación de identificadores de comprobantes
 def generar_numero_comprobante(cobro: CobroServicio) -> str:
     return f"COMP-{datetime.now().strftime('%Y%m%d')}-{cobro.id:06d}"
 
 
+# Genera un comprobante de pago para un cobro
+# Caso de uso: Generación de comprobantes de pago
 def generar_comprobante(db: Session, cobro: CobroServicio):
     comprobante = db.query(ComprobantePago).filter(
         ComprobantePago.id_cobro == cobro.id
@@ -210,6 +235,8 @@ def generar_comprobante(db: Session, cobro: CobroServicio):
     return comprobante
 
 
+# Serializa un comprobante de pago a formato JSON
+# Caso de uso: Normalización de datos de comprobantes
 def serializar_comprobante(comprobante: ComprobantePago):
     return {
         "id_comprobante": comprobante.id,
@@ -221,6 +248,8 @@ def serializar_comprobante(comprobante: ComprobantePago):
     }
 
 
+# Lista todos los conceptos de cobro activos del sistema
+# Caso de uso: Consulta de catálogo de conceptos de cobro
 @router.get("/conceptos-cobro")
 def listar_conceptos_cobro(db: Session = Depends(get_db)):
     conceptos = db.query(ConceptoCobro).filter(
@@ -229,6 +258,8 @@ def listar_conceptos_cobro(db: Session = Depends(get_db)):
     return [serializar_concepto(concepto) for concepto in conceptos]
 
 
+# Registra los conceptos de cobro para un incidente por parte del técnico
+# Caso de uso: Registro de conceptos de cobro por técnico
 @router.post("/incidentes/{id_incidente}/conceptos-cobro")
 def registrar_conceptos_cobro(
     id_incidente: int,
@@ -242,6 +273,7 @@ def registrar_conceptos_cobro(
 
     incidente, asignacion = obtener_incidente_y_asignacion(db, id_incidente)
     tecnico = validar_tecnico_asignado(db, token, asignacion)
+    validar_taller_operativo(db, asignacion.id_taller)
 
     cobro = obtener_o_crear_cobro(db, incidente, asignacion)
     if cobro.estado_pago in [ESTADO_PAGADO, ESTADO_COMPROBANTE]:
@@ -305,6 +337,8 @@ def registrar_conceptos_cobro(
     return serializar_cobro(db, cobro)
 
 
+# Obtiene el resumen del cobro de un incidente
+# Caso de uso: Consulta de resumen de pago
 @router.get("/incidentes/{id_incidente}/resumen")
 def obtener_resumen_pago(
     id_incidente: int,
@@ -323,6 +357,8 @@ def obtener_resumen_pago(
     return serializar_cobro(db, cobro)
 
 
+# Permite al cliente aceptar el monto de cobro generado
+# Caso de uso: Aceptación de monto de cobro por cliente
 @router.put("/incidentes/{id_incidente}/aceptar")
 def aceptar_monto_cliente(
     id_incidente: int,
@@ -348,6 +384,8 @@ def aceptar_monto_cliente(
     return serializar_cobro(db, cobro)
 
 
+# Registra el pago del cliente y genera el comprobante
+# Caso de uso: Registro de pago por cliente
 @router.post("/incidentes/{id_incidente}/pagar")
 def registrar_pago_cliente(
     id_incidente: int,
@@ -416,6 +454,8 @@ def registrar_pago_cliente(
     }
 
 
+# Obtiene el comprobante de pago de un incidente
+# Caso de uso: Consulta de comprobante de pago
 @router.get("/incidentes/{id_incidente}/comprobante")
 def obtener_comprobante_pago(
     id_incidente: int,

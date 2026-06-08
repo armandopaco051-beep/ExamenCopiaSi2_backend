@@ -23,6 +23,8 @@ router = APIRouter(
 )
 
 
+# Extrae el código de usuario del token JWT del encabezado Authorization
+# Caso de uso: Autenticación para endpoints de solicitudes
 def obtener_codigo_actor(request: Request) -> str:
     auth_header = request.headers.get("Authorization")
     if not auth_header:
@@ -44,6 +46,8 @@ def obtener_codigo_actor(request: Request) -> str:
     return str(codigo)
 
 
+# Crea una solicitud de registro para un nuevo admin_taller y su taller
+# Caso de uso: Solicitud de registro de taller
 @router.post("", status_code=201)
 def solicitar_registro(
     datos: RegistroAdminTallerCreate,
@@ -109,6 +113,8 @@ def solicitar_registro(
         "codigo_taller": nuevo_taller.codigo
     }
 
+# Lista todas las solicitudes de registro de talleres con filtro opcional por estado
+# Caso de uso: Consulta de solicitudes por administrador
 @router.get("", response_model=List[SolicitudAdminTallerResponse])
 def listar_solicitudes(
     estado: "str | None" = None,
@@ -152,6 +158,8 @@ def listar_solicitudes(
     return resultado
 
 
+# Cuenta las solicitudes de registro pendientes de aprobación
+# Caso de uso: Consulta de contador de solicitudes pendientes
 @router.get("/pendientes/count")
 def contar_pendientes(db: Session = Depends(get_db)):
     count = db.query(Usuario).filter(
@@ -162,6 +170,8 @@ def contar_pendientes(db: Session = Depends(get_db)):
     return {"pendientes": count}
 
 
+# Acepta o rechaza una solicitud de registro de taller
+# Caso de uso: Aprobación/rechazo de solicitud de taller por administrador
 @router.put("/{codigo_usuario}/responder")
 def responder_solicitud(
     codigo_usuario: str,

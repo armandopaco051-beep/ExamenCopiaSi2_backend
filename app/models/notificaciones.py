@@ -12,4 +12,4 @@ class Notificacion(Base):
     mensaje = Column(Text, nullable=False)
     leido = Column(Boolean, nullable=False, default=False)
     id_usuario = Column(String(100), ForeignKey("seguridad.usuario.codigo", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
-    id_incidente = Column(Integer, ForeignKey("operaciones.incidente.codigo", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    id_incidente = Column(Integer, ForeignKey("operaciones.incidente.codigo", onupdate="CASCADE", ondelete="CASCADE"), nullable=True)

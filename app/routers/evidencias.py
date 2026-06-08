@@ -27,7 +27,8 @@ os.makedirs(UPLOAD_IMG_DIR, exist_ok=True)
 os.makedirs(UPLOAD_AUDIO_DIR, exist_ok=True)
 
 
-# ✅ CAMBIO: función auxiliar para evitar repetir código al guardar archivos
+# Guarda un archivo subido en el sistema de archivos con nombre único
+# Caso de uso: Almacenamiento de evidencias multimedia
 def guardar_archivo(archivo: UploadFile, carpeta: str, extension_default: str) -> str:
     ext = os.path.splitext(archivo.filename or "")[1]
 
@@ -46,15 +47,12 @@ def guardar_archivo(archivo: UploadFile, carpeta: str, extension_default: str) -
 # ============================================================
 # SUBIR MUCHAS IMÁGENES
 # ============================================================
+# Sube una o múltiples imágenes de un incidente y las analiza con IA
+# Caso de uso: CU-11 + CU-12 + CU-13 Subir y analizar imágenes de evidencia
 @router.post("/imagen/{id_incidente}")
 async def subir_imagenes(
     id_incidente: int,
-
-    # ✅ CAMBIO:
-    # Antes usabas archivo como lista, pero luego lo tratabas como uno solo.
-    # Aquí lo dejamos como lista y lo recorremos con for.
     archivo: List[UploadFile] = File(...),
-
     db: Session = Depends(get_db)
 ):
     """
@@ -132,14 +130,12 @@ async def subir_imagenes(
 # ✅ CAMBIO:
 # Antes tenías "/audio/{id_cliente}", pero la función recibe id_incidente.
 # Lo correcto es "/audio/{id_incidente}".
+# Sube uno o múltiples audios de un incidente y los transcribe con IA
+# Caso de uso: CU-11 + CU-12 + CU-13 Subir y transcribir audios de evidencia
 @router.post("/audio/{id_incidente}")
 async def subir_audios(
     id_incidente: int,
-
-    # ✅ CAMBIO:
-    # Recibimos una lista de audios.
     archivo: List[UploadFile] = File(...),
-
     db: Session = Depends(get_db)
 ):
     """
@@ -205,6 +201,8 @@ async def subir_audios(
 # ============================================================
 # SUBIR TEXTO
 # ============================================================
+# Guarda una descripción de texto como evidencia del incidente
+# Caso de uso: CU-11 Guardar descripción textual de evidencia
 @router.post("/texto/{id_incidente}")
 async def subir_texto(
     id_incidente: int,
@@ -251,16 +249,14 @@ async def subir_texto(
 # ============================================================
 # ENDPOINT GENERAL: IMÁGENES + AUDIOS + TEXTO EN UNA SOLA PETICIÓN
 # ============================================================
+# Sube múltiples imágenes, audios y texto en una sola petición
+# Caso de uso: CU-11 + CU-12 + CU-13 Subir evidencias multimedia combinadas
 @router.post("/multimedia/{id_incidente}")
 async def subir_multimedia(
     id_incidente: int,
-
-    # ✅ CAMBIO:
-    # Este endpoint sirve si Flutter quiere mandar todo junto.
     imagenes: Optional[List[UploadFile]] = File(None),
     audios: Optional[List[UploadFile]] = File(None),
     texto: Optional[str] = Form(None),
-
     db: Session = Depends(get_db)
 ):
     """
@@ -385,6 +381,8 @@ async def subir_multimedia(
 # ============================================================
 # LISTAR EVIDENCIAS DE UN INCIDENTE
 # ============================================================
+# Lista todas las evidencias asociadas a un incidente
+# Caso de uso: Consulta de evidencias por incidente
 @router.get("/{id_incidente}")
 def listar_evidencias(id_incidente: int, db: Session = Depends(get_db)):
     """

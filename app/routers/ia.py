@@ -17,11 +17,15 @@ router = APIRouter(prefix="/ia", tags=["IA"])
 class TextoRequest(BaseModel): 
     texto: str 
 
+# Clasifica un texto de incidente para determinar categoría y prioridad
+# Caso de uso: CU-12 Clasificación de texto con IA
 @router.post("/clasificar")
 def clasificar(texto: TextoRequest):
     #Cu12 clasifica texto del incidente 
     return clasificar_texto(texto.texto)
 
+# Procesa todas las evidencias de un incidente y genera ficha técnica con IA
+# Caso de uso: CU-12 + CU-13 + CU-14 + CU-15 Procesamiento completo de incidente con IA
 @router.post("/procesar-incidente/{id_incidente}")
 def procesar_incidente_completo(
     id_incidente: int ,
@@ -88,6 +92,8 @@ def procesar_incidente_completo(
     }
 
 
+# Obtiene la ficha técnica procesada del incidente
+# Caso de uso: CU-15 Obtener ficha técnica de incidente
 @router.get("/ficha/{id_incidente}")
 def obtener_ficha(id_incidente: int, db: Session = Depends(get_db)):
     """CU-15: Obtiene la ficha técnica procesada del incidente"""

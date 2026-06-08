@@ -6,7 +6,7 @@ from jose import jwt, JWTError
 from pydantic import BaseModel
 from app.services.auth_service import registrar_bitacora
 from app.services.notificaciones_service import notificar_cambio_asignacion
-from app.services.suscripciones_service import validar_limite_tecnicos
+from app.services.suscripciones_service import validar_limite_tecnicos, validar_taller_operativo
 from app.database import get_db
 from app.models.talleres import Tecnico, Taller
 from app.models.seguridad import Usuario
@@ -580,6 +580,8 @@ def obtener_asignacion_del_tecnico(
             status_code=403,
             detail="Solo el tecnico asignado puede actualizar el progreso"
         )
+
+    validar_taller_operativo(db, asignacion.id_taller)
 
     return asignacion
 

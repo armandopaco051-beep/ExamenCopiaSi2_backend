@@ -21,11 +21,14 @@ from app.services.cotizaciones_service import (
     seleccionar_cotizacion,
 )
 from app.services.notificaciones_service import crear_notificacion
+from app.services.suscripciones_service import validar_taller_operativo
 
 
 router = APIRouter(prefix="/cotizaciones", tags=["Cotizaciones Express"])
 
 
+# Serializa una oferta de cotización con información del taller y técnico
+# Caso de uso: Normalización de datos de cotizaciones
 def serializar_oferta(db: Session, oferta: CotizacionTaller):
     taller = db.query(Taller).filter(Taller.codigo == oferta.id_taller).first()
     tecnico = None
@@ -56,6 +59,8 @@ def serializar_oferta(db: Session, oferta: CotizacionTaller):
     }
 
 
+# Serializa una solicitud de cotización con todas sus ofertas
+# Caso de uso: Normalización de datos de solicitudes de cotización
 def serializar_solicitud(db: Session, solicitud: SolicitudCotizacion):
     actualizar_vencimiento_solicitud(db, solicitud)
     ofertas = db.query(CotizacionTaller).filter(
@@ -79,6 +84,8 @@ def serializar_solicitud(db: Session, solicitud: SolicitudCotizacion):
     }
 
 
+# Serializa una solicitud de cotización filtrando solo las ofertas de un taller específico
+# Caso de uso: Vista de solicitudes para un taller específico
 def serializar_solicitud_taller(
     db: Session,
     solicitud: SolicitudCotizacion,
@@ -93,16 +100,22 @@ def serializar_solicitud_taller(
     return resultado
 
 
+# Valida que el usuario sea el cliente propietario del incidente
+# Caso de uso: Control de acceso para operaciones de cliente
 def validar_cliente_incidente(usuario: Usuario, incidente: Incidente):
     if usuario.id_rol != 4 or incidente.codigo_usuario != usuario.codigo:
         raise HTTPException(status_code=403, detail="Solo el cliente del incidente puede realizar esta accion")
 
 
+# Valida que el usuario sea administrador de la plataforma
+# Caso de uso: Control de acceso para operaciones administrativas
 def validar_admin(usuario: Usuario):
     if usuario.id_rol != 1:
         raise HTTPException(status_code=403, detail="Solo el administrador puede supervisar cotizaciones")
 
 
+# Lista todas las solicitudes de cotización para el administrador de la plataforma
+# Caso de uso: Supervisión de cotizaciones por administrador
 @router.get("/admin/solicitudes")
 def listar_solicitudes_admin(
     estado: str | None = None,
@@ -120,6 +133,8 @@ def listar_solicitudes_admin(
     return resultado
 
 
+# Lista las invitaciones de cotización recibidas por un taller
+# Caso de uso: Gestión de invitaciones por admin de taller
 @router.get("/mis-solicitudes")
 def listar_solicitudes_taller(
     estado: str | None = None,
@@ -164,6 +179,8 @@ def listar_solicitudes_taller(
     return resultado
 
 
+# Crea una solicitud de cotización express para un incidente
+# Caso de uso: Solicitud de cotizaciones express por cliente
 @router.post("/incidentes/{id_incidente}/solicitar", status_code=201)
 def solicitar_cotizaciones(
     id_incidente: int,
@@ -189,6 +206,8 @@ def solicitar_cotizaciones(
     return serializar_solicitud(db, solicitud)
 
 
+# Obtiene todas las cotizaciones de un incidente
+# Caso de uso: Consulta de cotizaciones por incidente
 @router.get("/incidentes/{id_incidente}")
 def obtener_cotizaciones_incidente(
     id_incidente: int,
@@ -233,6 +252,8 @@ def obtener_cotizaciones_incidente(
     return respuesta
 
 
+# Permite a un taller responder una invitación de cotización con su oferta
+# Caso de uso: Respuesta a solicitud de cotización por taller
 @router.post("/solicitudes/{id_solicitud}/responder")
 def responder_cotizacion(
     id_solicitud: int,
@@ -244,6 +265,7 @@ def responder_cotizacion(
         raise HTTPException(status_code=403, detail="Solo el admin_taller puede responder cotizaciones")
 
     taller = get_taller_admin(usuario, db)
+    validar_taller_operativo(db, taller.codigo)
     solicitud = obtener_solicitud(db, id_solicitud, bloquear=True)
     if solicitud.estado not in ["ABIERTA", "CON_RESPUESTAS"]:
         db.commit()
@@ -298,6 +320,8 @@ def responder_cotizacion(
     }
 
 
+# Permite a un taller rechazar una invitación de cotización
+# Caso de uso: Rechazo de invitación de cotización por taller
 @router.put("/solicitudes/{id_solicitud}/rechazar")
 def rechazar_invitacion(
     id_solicitud: int,
@@ -339,6 +363,8 @@ def rechazar_invitacion(
     return {"mensaje": "Invitacion rechazada correctamente"}
 
 
+# Permite al cliente aceptar una cotización y asignar el taller
+# Caso de uso: Aceptación de cotización por cliente
 @router.put("/ofertas/{id_cotizacion}/aceptar")
 def aceptar_cotizacion(
     id_cotizacion: int,
@@ -367,6 +393,8 @@ def aceptar_cotizacion(
     }
 
 
+# Permite al administrador solicitar un ajuste a una cotización enviada
+# Caso de uso: Solicitud de ajuste de cotización por administrador
 @router.put("/ofertas/{id_cotizacion}/solicitar-ajuste")
 def solicitar_ajuste(
     id_cotizacion: int,

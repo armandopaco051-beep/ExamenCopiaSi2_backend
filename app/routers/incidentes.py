@@ -17,6 +17,8 @@ from fastapi import Request
 router = APIRouter(prefix="/incidentes", tags=["Incidentes - CU10"])
 
 
+# Serializa un incidente a formato JSON para respuesta
+# Caso de uso: Normalización de datos de incidentes
 def serializar_incidente(incidente: Incidente):
     return {
         "codigo": incidente.codigo,
@@ -38,7 +40,8 @@ def serializar_incidente(incidente: Incidente):
     }
 
 
-# CU-10 — Crear incidente (reporte de emergencia)
+# Crea un nuevo incidente de emergencia vehicular
+# Caso de uso: CU-10 Crear incidente (reporte de emergencia)
 @router.post("/", response_model=IncidenteResponse, status_code=201)
 def crear_incidente(datos: IncidenteCreate, db: Session = Depends(get_db), request: Request = None):
     # 1. Crear el incidente
@@ -94,7 +97,8 @@ def crear_incidente(datos: IncidenteCreate, db: Session = Depends(get_db), reque
     return nuevo
 
 
-# CU - Sincronizar incidente creado en modo offline desde la app movil.
+# Sincroniza un incidente creado en modo offline desde la app móvil
+# Caso de uso: Sincronización de incidentes offline
 @router.post("/sincronizar-offline", status_code=201)
 def sincronizar_incidente_offline(
     datos: IncidenteOfflineSync,
@@ -127,7 +131,8 @@ def sincronizar_incidente_offline(
     }
 
 
-# Obtener incidente por código
+# Obtiene un incidente específico por su código
+# Caso de uso: Consulta de incidente por ID
 @router.get("/{codigo}", response_model=IncidenteResponse)
 def obtener_incidente(codigo: int, db: Session = Depends(get_db)):
     inc = db.query(Incidente).filter(Incidente.codigo == codigo).first()
@@ -136,7 +141,8 @@ def obtener_incidente(codigo: int, db: Session = Depends(get_db)):
     return inc
 
 
-# Historial de incidentes por usuario
+# Obtiene el historial de incidentes de un usuario
+# Caso de uso: Consulta de historial de incidentes por usuario
 @router.get("/usuario/{codigo_usuario}", response_model=List[IncidenteResponse])
 def historial_usuario(codigo_usuario: str, db: Session = Depends(get_db)):
     return db.query(Incidente).filter(
@@ -144,7 +150,8 @@ def historial_usuario(codigo_usuario: str, db: Session = Depends(get_db)):
     ).order_by(Incidente.fecha_reporte.desc()).all()
 
 
-# Actualizar estado del incidente
+# Actualiza los datos de un incidente
+# Caso de uso: Actualización de información de incidente
 @router.put("/{codigo}", response_model=IncidenteResponse)
 def actualizar_incidente(
     codigo: int,
@@ -161,7 +168,8 @@ def actualizar_incidente(
     return inc
 
 
-# CU — Cancelar incidente
+# Cancela un incidente cambiando su estado a cancelado
+# Caso de uso: Cancelación de incidente
 @router.put("/{codigo}/cancelar", response_model=IncidenteResponse)
 def cancelar_incidente(codigo: int, db: Session = Depends(get_db)):
     inc = db.query(Incidente).filter(Incidente.codigo == codigo).first()
@@ -174,7 +182,8 @@ def cancelar_incidente(codigo: int, db: Session = Depends(get_db)):
     return inc
 
 
-# Listar todos los incidentes (para admin/taller)
+# Lista todos los incidentes del sistema
+# Caso de uso: Consulta general de incidentes para admin/taller
 @router.get("/", response_model=List[IncidenteResponse])
 def listar_incidentes(db: Session = Depends(get_db)):
     return db.query(Incidente).order_by(
@@ -182,6 +191,8 @@ def listar_incidentes(db: Session = Depends(get_db)):
     ).all()
 
 
+# Agrega un evento a la línea de tiempo del incidente
+# Caso de uso: Construcción de línea de tiempo de servicio
 def agregar_evento(eventos: list, codigo: str, titulo: str, descripcion: str, fecha, estado: str = "completado", datos: dict | None = None):
     if not fecha:
         return
@@ -196,6 +207,8 @@ def agregar_evento(eventos: list, codigo: str, titulo: str, descripcion: str, fe
     })
 
 
+# Busca la fecha de una acción específica en la bitácora para una asignación
+# Caso de uso: Reconstrucción de línea de tiempo desde bitácora
 def buscar_fecha_bitacora(db: Session, asignacion_id: int, accion: str):
     patrones = [
         f"%asignación {asignacion_id}%",
@@ -212,6 +225,8 @@ def buscar_fecha_bitacora(db: Session, asignacion_id: int, accion: str):
     return registro.fecha if registro else None
 
 
+# Obtiene la línea de tiempo completa del servicio de un incidente
+# Caso de uso: Seguimiento detallado del servicio
 @router.get("/{id_incidente}/linea-tiempo")
 def obtener_linea_tiempo_servicio(
     id_incidente: int,
@@ -380,6 +395,8 @@ from sqlalchemy import text
 from app.database import get_db
 
 
+# Obtiene el estado actual de seguimiento de un incidente con información del técnico y taller
+# Caso de uso: Seguimiento en tiempo real del incidente
 @router.get("/{id_incidente}/seguimiento")
 def obtener_seguimiento_incidente(
     id_incidente: int,

@@ -13,15 +13,21 @@ from app.schemas.vehiculos import VehiculoCreate, VehiculoResponse, VehiculoUpda
 router = APIRouter(prefix="/vehiculos", tags=["Vehiculos"])
 
 
+# Normaliza una placa de vehículo a mayúsculas sin espacios
+# Caso de uso: Normalización de placas para consistencia
 def normalizar_placa(placa: str) -> str:
     return placa.strip().upper()
 
 
+# Valida que el usuario sea cliente o administrador
+# Caso de uso: Control de acceso para gestión de vehículos
 def validar_cliente_o_admin(usuario: Usuario):
     if usuario.id_rol not in [1, 4]:
         raise HTTPException(status_code=403, detail="No autorizado para gestionar vehiculos")
 
 
+# Obtiene un vehículo validando que el usuario tenga acceso al mismo
+# Caso de uso: Control de acceso para operaciones de vehículo
 def obtener_vehiculo_autorizado(codigo: int, usuario: Usuario, db: Session):
     vehiculo = db.query(Vehiculo).filter(Vehiculo.codigo == codigo).first()
     if not vehiculo:
@@ -33,6 +39,8 @@ def obtener_vehiculo_autorizado(codigo: int, usuario: Usuario, db: Session):
     raise HTTPException(status_code=403, detail="No autorizado para este vehiculo")
 
 
+# Crea un nuevo vehículo para un cliente
+# Caso de uso: Registro de vehículo
 @router.post("/", response_model=VehiculoResponse, status_code=201)
 def crear_vehiculo(
     datos: VehiculoCreate,
@@ -62,6 +70,8 @@ def crear_vehiculo(
     return nuevo
 
 
+# Lista los vehículos del cliente actual
+# Caso de uso: Consulta de vehículos propios por cliente
 @router.get("/mis-vehiculos", response_model=List[VehiculoResponse])
 def listar_mis_vehiculos(
     usuario: Usuario = Depends(get_current_usuario),
@@ -76,6 +86,8 @@ def listar_mis_vehiculos(
     ).all()
 
 
+# Lista los vehículos de un usuario específico
+# Caso de uso: Consulta de vehículos por usuario
 @router.get("/usuario/{id_usuario}", response_model=List[VehiculoResponse])
 def listar_por_usuario(
     id_usuario: str,
@@ -88,6 +100,8 @@ def listar_por_usuario(
     return db.query(Vehiculo).filter(Vehiculo.id_usuario == id_usuario).all()
 
 
+# Obtiene un vehículo específico por su código
+# Caso de uso: Consulta de vehículo por ID
 @router.get("/{codigo}", response_model=VehiculoResponse)
 def obtener_vehiculo(
     codigo: int,
@@ -97,6 +111,8 @@ def obtener_vehiculo(
     return obtener_vehiculo_autorizado(codigo, usuario, db)
 
 
+# Actualiza los datos de un vehículo
+# Caso de uso: Actualización de información de vehículo
 @router.put("/{codigo}", response_model=VehiculoResponse)
 def actualizar_vehiculo(
     codigo: int,
@@ -132,6 +148,8 @@ def actualizar_vehiculo(
     return vehiculo
 
 
+# Desactiva un vehículo (no lo elimina, solo marca como inactivo)
+# Caso de uso: Desactivación de vehículo
 @router.delete("/{codigo}")
 def desactivar_vehiculo(
     codigo: int,

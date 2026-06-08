@@ -81,7 +81,7 @@ INSERT INTO suscripciones.plan_suscripcion (
 VALUES (
     'Plan Estandar',
     30,
-    0,
+    100.00,
     TRUE,
     TRUE,
     'ACTIVO',
@@ -94,6 +94,7 @@ VALUES (
 )
 ON CONFLICT (nombre) DO UPDATE SET
     duracion_dias = EXCLUDED.duracion_dias,
+    precio = EXCLUDED.precio,
     dominio_incluido = EXCLUDED.dominio_incluido,
     dominio_personalizado = EXCLUDED.dominio_personalizado,
     estado = EXCLUDED.estado,

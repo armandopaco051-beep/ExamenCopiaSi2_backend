@@ -25,6 +25,8 @@ class EvaluacionCreate(BaseModel):
     precio: int | None = Field(default=None, ge=1, le=5)
 
 
+# Decodifica y valida el token JWT
+# Caso de uso: Autenticación para endpoints de evaluaciones
 def obtener_payload(token: str):
     payload = decode_token(token)
     if not payload:
@@ -32,6 +34,8 @@ def obtener_payload(token: str):
     return payload
 
 
+# Valida que el usuario sea el cliente propietario del incidente
+# Caso de uso: Control de acceso para evaluaciones de cliente
 def validar_cliente_incidente(token: str, incidente: Incidente):
     payload = obtener_payload(token)
     if payload.get("tipo") != "usuario" or payload.get("rol") != 4 or payload.get("sub") != incidente.codigo_usuario:
@@ -42,6 +46,8 @@ def validar_cliente_incidente(token: str, incidente: Incidente):
     return payload
 
 
+# Valida que el usuario sea admin_taller del taller especificado
+# Caso de uso: Control de acceso para evaluaciones de taller
 def validar_admin_taller(db: Session, token: str, id_taller: int):
     payload = obtener_payload(token)
     if payload.get("tipo") != "usuario" or payload.get("rol") != 2:
@@ -53,6 +59,8 @@ def validar_admin_taller(db: Session, token: str, id_taller: int):
     return taller
 
 
+# Valida que el token pertenezca al técnico especificado
+# Caso de uso: Control de acceso para evaluaciones de técnico
 def validar_tecnico(token: str, codigo_tecnico: str):
     payload = obtener_payload(token)
     if payload.get("tipo") != "tecnico" or payload.get("sub") != codigo_tecnico:
@@ -60,6 +68,8 @@ def validar_tecnico(token: str, codigo_tecnico: str):
     return payload
 
 
+# Obtiene el incidente y su asignación finalizada para evaluación
+# Caso de uso: Validación de estado para evaluación de servicio
 def obtener_incidente_y_asignacion_finalizada(db: Session, id_incidente: int):
     incidente = db.query(Incidente).filter(Incidente.codigo == id_incidente).first()
     if not incidente:
@@ -81,6 +91,8 @@ def obtener_incidente_y_asignacion_finalizada(db: Session, id_incidente: int):
     return incidente, asignacion
 
 
+# Serializa una evaluación de servicio a formato JSON
+# Caso de uso: Normalización de datos de evaluaciones
 def serializar_evaluacion(evaluacion: EvaluacionServicio):
     return {
         "id": evaluacion.id,
@@ -99,6 +111,8 @@ def serializar_evaluacion(evaluacion: EvaluacionServicio):
     }
 
 
+# Registra una evaluación del servicio por parte del cliente
+# Caso de uso: Evaluación de servicio finalizado por cliente
 @router.post("/incidentes/{id_incidente}")
 def registrar_evaluacion_servicio(
     id_incidente: int,
@@ -146,6 +160,8 @@ def registrar_evaluacion_servicio(
     }
 
 
+# Obtiene la evaluación de un incidente específico
+# Caso de uso: Consulta de evaluación por incidente
 @router.get("/incidentes/{id_incidente}")
 def obtener_evaluacion_incidente(
     id_incidente: int,
@@ -189,6 +205,8 @@ def obtener_evaluacion_incidente(
     return serializar_evaluacion(evaluacion)
 
 
+# Lista todas las evaluaciones de un taller con su promedio
+# Caso de uso: Consulta de evaluaciones por taller
 @router.get("/taller/{id_taller}")
 def listar_evaluaciones_taller(
     id_taller: int,
@@ -213,6 +231,8 @@ def listar_evaluaciones_taller(
     }
 
 
+# Obtiene el resumen de evaluaciones de un técnico con promedio y últimas evaluaciones
+# Caso de uso: Consulta de evaluaciones por técnico
 @router.get("/tecnico/{codigo_tecnico}/resumen")
 def resumen_evaluaciones_tecnico(
     codigo_tecnico: str,
