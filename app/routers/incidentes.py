@@ -5,7 +5,7 @@ from typing import List
 from datetime import datetime
 from app.database import get_db
 from app.models.operaciones import Incidente , Asignacion
-from app.schemas.incidente import IncidenteCreate, IncidenteUpdate, IncidenteResponse
+from app.schemas.incidente import IncidenteCreate, IncidenteOfflineSync, IncidenteUpdate, IncidenteResponse
 from app.models.talleres import Taller, Tecnico
 from app.models.seguridad import Bitacora
 from app.models.catalogo import EstadoIncidente, EstadoAsignacion
@@ -15,6 +15,27 @@ from app.services.notificaciones_service import notificar_incidente_cliente
 from fastapi import Request
 
 router = APIRouter(prefix="/incidentes", tags=["Incidentes - CU10"])
+
+
+def serializar_incidente(incidente: Incidente):
+    return {
+        "codigo": incidente.codigo,
+        "descripcion": incidente.descripcion,
+        "latitud": incidente.latitud,
+        "longitud": incidente.longitud,
+        "fecha_reporte": incidente.fecha_reporte,
+        "fecha_cierre": incidente.fecha_cierre,
+        "id_prioridad": incidente.id_prioridad,
+        "id_categoria_problema": incidente.id_categoria_problema,
+        "id_estado_incidente": incidente.id_estado_incidente,
+        "id_vehiculo": incidente.id_vehiculo,
+        "codigo_usuario": incidente.codigo_usuario,
+        "id_local_origen": incidente.id_local_origen,
+        "origen_registro": incidente.origen_registro,
+        "fecha_creacion_local": incidente.fecha_creacion_local,
+        "version_local": incidente.version_local,
+        "estado_local_origen": incidente.estado_local_origen,
+    }
 
 
 # CU-10 — Crear incidente (reporte de emergencia)
@@ -31,6 +52,11 @@ def crear_incidente(datos: IncidenteCreate, db: Session = Depends(get_db), reque
         id_estado_incidente=datos.id_estado_incidente,
         id_vehiculo=datos.id_vehiculo,
         codigo_usuario=datos.codigo_usuario,
+        id_local_origen=datos.id_local_origen,
+        origen_registro=datos.origen_registro,
+        fecha_creacion_local=datos.fecha_creacion_local,
+        version_local=datos.version_local,
+        estado_local_origen=datos.estado_local_origen,
     )
 
     db.add(nuevo)
@@ -66,6 +92,39 @@ def crear_incidente(datos: IncidenteCreate, db: Session = Depends(get_db), reque
     db.refresh(nuevo)
 
     return nuevo
+
+
+# CU - Sincronizar incidente creado en modo offline desde la app movil.
+@router.post("/sincronizar-offline", status_code=201)
+def sincronizar_incidente_offline(
+    datos: IncidenteOfflineSync,
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    existente = db.query(Incidente).filter(
+        Incidente.codigo_usuario == datos.codigo_usuario,
+        Incidente.id_local_origen == datos.id_local_origen
+    ).first()
+
+    if existente:
+        return {
+            "mensaje": "Incidente offline ya estaba sincronizado",
+            "sincronizado": True,
+            "duplicado": True,
+            "id_local_origen": datos.id_local_origen,
+            "id_backend": existente.codigo,
+            "incidente": serializar_incidente(existente)
+        }
+
+    nuevo = crear_incidente(datos, db, request)
+    return {
+        "mensaje": "Incidente offline sincronizado correctamente",
+        "sincronizado": True,
+        "duplicado": False,
+        "id_local_origen": datos.id_local_origen,
+        "id_backend": nuevo.codigo,
+        "incidente": serializar_incidente(nuevo)
+    }
 
 
 # Obtener incidente por código

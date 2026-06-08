@@ -15,6 +15,16 @@ class IncidenteCreate(BaseModel):
     id_vehiculo: int
     codigo_usuario: str
     cotizacion_express: bool = False
+    id_local_origen: Optional[str] = None
+    origen_registro: str = "ONLINE"
+    fecha_creacion_local: Optional[datetime] = None
+    version_local: Optional[int] = None
+    estado_local_origen: Optional[str] = None
+
+
+class IncidenteOfflineSync(IncidenteCreate):
+    id_local_origen: str
+    origen_registro: str = "OFFLINE"
 
 
 class IncidenteUpdate(BaseModel):
@@ -37,6 +47,11 @@ class IncidenteResponse(BaseModel):
     id_estado_incidente: int
     id_vehiculo: int
     codigo_usuario: str
+    id_local_origen: Optional[str] = None
+    origen_registro: str = "ONLINE"
+    fecha_creacion_local: Optional[datetime] = None
+    version_local: Optional[int] = None
+    estado_local_origen: Optional[str] = None
 
     class Config:
         from_attributes = True

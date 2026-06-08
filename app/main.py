@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from fastapi.staticfiles import StaticFiles
-from app.routers import auth, usuarios, vehiculos, talleres, tecnicos,incidentes, bitacora,evidencias,ia,asignacion,dashboard,solicitudes, tracking, validacion_arribo, chat, pagos, evaluaciones, notificaciones, suscripciones, cotizaciones
+from app.routers import auth, usuarios, vehiculos, talleres, tecnicos,incidentes, bitacora,evidencias,ia,asignacion,dashboard,solicitudes, tracking, validacion_arribo, chat, pagos, evaluaciones, notificaciones, suscripciones, cotizaciones, sync
 import os 
 
 
@@ -50,6 +50,7 @@ app.include_router(evaluaciones.router)
 app.include_router(notificaciones.router)
 app.include_router(suscripciones.router)
 app.include_router(cotizaciones.router)
+app.include_router(sync.router)
 app.include_router(incidentes.router , prefix = "/incidentes",  tags=["Incidentes"])
 
 os.makedirs("uploads/imagenes", exist_ok=True)

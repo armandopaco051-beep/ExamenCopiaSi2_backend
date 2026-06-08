@@ -5,7 +5,10 @@ from app.database import Base
 
 class Incidente(Base):
     __tablename__ = "incidente"
-    __table_args__ = {"schema": "operaciones"}
+    __table_args__ = (
+        UniqueConstraint("codigo_usuario", "id_local_origen", name="uq_incidente_usuario_id_local_origen"),
+        {"schema": "operaciones"},
+    )
 
     codigo = Column(Integer, primary_key=True, index=True)
     descripcion = Column(Text, nullable=False)
@@ -18,10 +21,35 @@ class Incidente(Base):
     id_estado_incidente = Column(Integer, ForeignKey("catalogo.estado_incidente.id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
     id_vehiculo = Column(Integer, ForeignKey("clientes.vehiculo.codigo", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
     codigo_usuario = Column(String(100), ForeignKey("seguridad.usuario.codigo", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    id_local_origen = Column(String(100), nullable=True)
+    origen_registro = Column(String(20), nullable=False, default="ONLINE")
+    fecha_creacion_local = Column(TIMESTAMP, nullable=True)
+    version_local = Column(Integer, nullable=True)
+    estado_local_origen = Column(String(30), nullable=True)
 
     historial = relationship("HistorialEstado", back_populates="incidente")
     asignaciones = relationship("Asignacion", back_populates="incidente")
     evidencias = relationship("Evidencia", back_populates="incidente")
+
+
+class ConflictoSincronizacion(Base):
+    __tablename__ = "conflicto_sincronizacion"
+    __table_args__ = {"schema": "operaciones"}
+
+    id = Column(Integer, primary_key=True, index=True)
+    id_local_origen = Column(String(100), nullable=False)
+    codigo_usuario = Column(String(100), ForeignKey("seguridad.usuario.codigo", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)
+    id_incidente_backend = Column(Integer, ForeignKey("operaciones.incidente.codigo", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)
+    tipo_conflicto = Column(String(50), nullable=False)
+    estado = Column(String(30), nullable=False, default="PENDIENTE")
+    regla_arbitraje = Column(String(100), nullable=True)
+    datos_locales_json = Column(Text, nullable=False)
+    datos_servidor_json = Column(Text, nullable=True)
+    resolucion = Column(String(50), nullable=True)
+    observacion = Column(Text, nullable=True)
+    resuelto_por = Column(String(100), nullable=True)
+    fecha_deteccion = Column(TIMESTAMP, nullable=False)
+    fecha_resolucion = Column(TIMESTAMP, nullable=True)
 
 
 class HistorialEstado(Base):
