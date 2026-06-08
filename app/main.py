@@ -1,4 +1,4 @@
-from sys import prefix
+#from sys import prefix
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
@@ -17,10 +17,10 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://examen-si2-frontend.vercel.app"
+        "https://examen-si2-frontend.vercel.app",
         "http://localhost:4200",
         "http://127.0.0.1:4200",
-        "https://examencopiasi2-backend.onrender.com"
+      #  "https://examencopiasi2-backend.onrender.com"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -56,7 +56,7 @@ app.include_router(incidentes.router , prefix = "/incidentes",  tags=["Incidente
 os.makedirs("uploads/imagenes", exist_ok=True)
 os.makedirs("uploads/audios", exist_ok=True)
 
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+#app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 
 @app.get("/", tags=["Root"])
