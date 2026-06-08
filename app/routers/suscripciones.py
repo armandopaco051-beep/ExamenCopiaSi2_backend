@@ -34,6 +34,7 @@ from app.schemas.suscripciones import (
 )
 from app.services.suscripciones_service import (
     calcular_cuotas_tenant,
+    aprovisionar_tenant_gratis_taller,
     obtener_dominio_principal,
     obtener_plan_estandar,
     obtener_suscripcion_actual,
@@ -272,16 +273,39 @@ def registrar_pago_suscripcion_desde_invoice(
 # Caso de uso: Consulta de plan estándar
 @router.get("/plan-estandar")
 def obtener_plan_unico(db: Session = Depends(get_db)):
-    if datos.id_plan:
-        plan = db.query(PlanSuscripcion).filter(
-            PlanSuscripcion.id == datos.id_plan,
-            PlanSuscripcion.estado == "ACTIVO"
-        ).first()
-        if not plan:
-            raise HTTPException(status_code=404, detail="Plan no encontrado o inactivo")
-    else:
-        plan = obtener_plan_estandar(db)
+    plan = obtener_plan_estandar(db)
     return serializar_plan(plan)
+
+
+@router.post("/backfill/tenants-gratis")
+def crear_tenants_gratis_talleres_existentes(
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
+    validar_admin(usuario)
+    plan = obtener_plan_estandar(db)
+    plan.precio = 0
+
+    talleres = db.query(Taller).all()
+    creados = 0
+    existentes = 0
+    for taller in talleres:
+        antes = obtener_tenant_por_taller(db, taller.codigo)
+        aprovisionar_tenant_gratis_taller(db, taller)
+        if antes:
+            existentes += 1
+        else:
+            creados += 1
+
+    db.commit()
+    return {
+        "mensaje": "Backfill de tenants y suscripciones gratis completado",
+        "plan": "Plan Estandar",
+        "precio": 0,
+        "talleres_procesados": len(talleres),
+        "tenants_creados": creados,
+        "tenants_existentes": existentes,
+    }
 
 
 @router.get("/planes", response_model=list[PlanSuscripcionResponse])
@@ -380,7 +404,16 @@ def aprovisionar_tenant(
     if db.query(DominioTenant).filter(DominioTenant.dominio == dominio).first():
         raise HTTPException(status_code=400, detail="Dominio ya registrado")
 
-    plan = obtener_plan_estandar(db)
+    if datos.id_plan:
+        plan = db.query(PlanSuscripcion).filter(
+            PlanSuscripcion.id == datos.id_plan,
+            PlanSuscripcion.estado == "ACTIVO"
+        ).first()
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan no encontrado o inactivo")
+    else:
+        plan = obtener_plan_estandar(db)
+
     hoy = date.today()
 
     tenant = Tenant(

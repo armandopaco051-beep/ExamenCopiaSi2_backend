@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import func
@@ -25,6 +25,81 @@ def obtener_plan_estandar(db: Session) -> PlanSuscripcion:
     if not plan:
         raise HTTPException(status_code=404, detail="Plan Estandar no configurado")
     return plan
+
+
+def normalizar_slug(valor: str) -> str:
+    import re
+
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", valor.strip().lower())
+    return slug.strip("-") or "taller"
+
+
+def generar_slug_unico_taller(db: Session, taller: Taller) -> str:
+    base = f"{normalizar_slug(taller.nombre or 'taller')}-{taller.codigo}"
+    slug = base
+    contador = 1
+    while db.query(Tenant).filter(Tenant.slug == slug).first():
+        contador += 1
+        slug = f"{base}-{contador}"
+    return slug
+
+
+def aprovisionar_tenant_gratis_taller(db: Session, taller: Taller) -> Tenant:
+    plan = obtener_plan_estandar(db)
+    existente = obtener_tenant_por_taller(db, taller.codigo)
+    if existente:
+        dominio = db.query(DominioTenant).filter(DominioTenant.id_tenant == existente.id).first()
+        if not dominio:
+            slug = existente.slug or generar_slug_unico_taller(db, taller)
+            db.add(DominioTenant(
+                id_tenant=existente.id,
+                dominio=f"{slug}.emergvial.com",
+                tipo="SUBDOMINIO",
+                estado="ACTIVO"
+            ))
+
+        suscripcion = db.query(SuscripcionTenant).filter(
+            SuscripcionTenant.id_tenant == existente.id
+        ).first()
+        if not suscripcion:
+            hoy = date.today()
+            db.add(SuscripcionTenant(
+                id_tenant=existente.id,
+                id_plan=plan.id,
+                fecha_inicio=hoy,
+                fecha_vencimiento=hoy + timedelta(days=plan.duracion_dias),
+                estado="ACTIVA"
+            ))
+            db.flush()
+        return existente
+
+    slug = generar_slug_unico_taller(db, taller)
+    tenant = Tenant(
+        nombre=taller.nombre or f"Taller {taller.codigo}",
+        slug=slug,
+        id_taller=taller.codigo,
+        estado="ACTIVO" if taller.activo else "PENDIENTE"
+    )
+    db.add(tenant)
+    db.flush()
+
+    db.add(DominioTenant(
+        id_tenant=tenant.id,
+        dominio=f"{slug}.emergvial.com",
+        tipo="SUBDOMINIO",
+        estado="ACTIVO"
+    ))
+
+    hoy = date.today()
+    db.add(SuscripcionTenant(
+        id_tenant=tenant.id,
+        id_plan=plan.id,
+        fecha_inicio=hoy,
+        fecha_vencimiento=hoy + timedelta(days=plan.duracion_dias),
+        estado="ACTIVA"
+    ))
+    db.flush()
+    return tenant
 
 
 def obtener_tenant_por_taller(db: Session, id_taller: int) -> Tenant | None:

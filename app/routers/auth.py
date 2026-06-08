@@ -15,6 +15,7 @@ from app.models.talleres import Tecnico
 from app.services.auth_service import (
     hash_password, verify_password, create_access_token , get_permisos_usuario, registrar_bitacora
     )
+from app.services.suscripciones_service import aprovisionar_tenant_gratis_taller
 
 from datetime import datetime
 from fastapi.security import OAuth2PasswordRequestForm
@@ -306,6 +307,8 @@ def registrar_taller_para_admin(
     )
 
     db.add(nuevo_taller)
+    db.flush()
+    aprovisionar_tenant_gratis_taller(db, nuevo_taller)
     db.commit()
     db.refresh(nuevo_taller)
 

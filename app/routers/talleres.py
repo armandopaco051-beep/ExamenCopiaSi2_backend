@@ -7,6 +7,7 @@ from app.database import get_db
 from app.models.seguridad import Usuario
 from app.models.talleres import Taller
 from app.routers.tecnicos import get_current_usuario, get_taller_admin
+from app.services.suscripciones_service import aprovisionar_tenant_gratis_taller
 from app.schemas.taller import (
     CoberturaResponse,
     CoberturaUpdate,
@@ -74,6 +75,8 @@ def crear_taller(
     validar_admin_global(usuario)
     nuevo = Taller(**datos.model_dump())
     db.add(nuevo)
+    db.flush()
+    aprovisionar_tenant_gratis_taller(db, nuevo)
     db.commit()
     db.refresh(nuevo)
     return nuevo

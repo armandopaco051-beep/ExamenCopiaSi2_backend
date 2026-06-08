@@ -16,6 +16,7 @@ from app.services.auth_service import (
     registrar_bitacora,
     decode_token
 )
+from app.services.suscripciones_service import aprovisionar_tenant_gratis_taller
 
 router = APIRouter(
     prefix="/solicitudes-registro",
@@ -215,6 +216,8 @@ def responder_solicitud(
             taller.estado_registro = "aceptado"
             taller.observacion_admin = None
             taller.fecha_respuesta = datetime.now()
+            db.flush()
+            aprovisionar_tenant_gratis_taller(db, taller)
 
             registrar_bitacora(
                 db=db,
