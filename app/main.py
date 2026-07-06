@@ -17,7 +17,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://examen-copia-si2-frontend-169e.vercel.app",
+        "https://examen-copia-si2-frontend.vercel.app",
         "http://localhost:4200",
         "http://127.0.0.1:4200",
       #  "https://examencopiasi2-backend.onrender.com"
