@@ -22,6 +22,7 @@ app.add_middleware(
         "http://127.0.0.1:4200",
       #  "https://examencopiasi2-backend.onrender.com"
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
