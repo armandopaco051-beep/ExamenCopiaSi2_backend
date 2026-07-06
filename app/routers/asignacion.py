@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
 from app.database import get_db
@@ -15,6 +16,132 @@ from app.schemas.asignacion import ResponderAsignacion, AsignacionCreate, Asigna
 from sqlalchemy import text
 from app.models.seguridad import Usuario
 router =  APIRouter(prefix="/asignacion", tags=["Asignacion"])
+
+
+def serializar_mapping(row):
+    if not row:
+        return None
+    return jsonable_encoder(dict(row))
+
+
+def obtener_detalles_servicio(db: Session, id_incidente: int, id_asignacion: int, id_taller: int):
+    evidencias = db.execute(text("""
+        SELECT
+            e.codigo,
+            e.fecha_subida,
+            e.transcripcion,
+            e.url_archivo,
+            e.id_tipo_evidencia,
+            te.nombre AS tipo_evidencia
+        FROM multimedia.evidencia e
+        LEFT JOIN catalogo.tipo_evidencia te ON te.codigo = e.id_tipo_evidencia
+        WHERE e.id_incidente = :id_incidente
+        ORDER BY e.fecha_subida DESC
+    """), {"id_incidente": id_incidente}).mappings().all()
+
+    cotizacion = db.execute(text("""
+        SELECT
+            ct.id,
+            ct.id_solicitud,
+            sc.ronda,
+            sc.estado AS estado_solicitud,
+            sc.fecha_solicitud,
+            sc.fecha_finalizacion,
+            ct.estado,
+            ct.distancia_km,
+            ct.monto_estimado,
+            ct.tiempo_llegada_minutos,
+            ct.tiempo_reparacion_minutos,
+            ct.descripcion_servicio,
+            ct.observacion,
+            ct.fecha_invitacion,
+            ct.fecha_respuesta,
+            ct.fecha_vencimiento
+        FROM operaciones.solicitud_cotizacion sc
+        JOIN operaciones.cotizacion_taller ct ON ct.id_solicitud = sc.id
+        WHERE sc.id_incidente = :id_incidente
+          AND ct.id_taller = :id_taller
+        ORDER BY ct.fecha_invitacion DESC
+        LIMIT 1
+    """), {"id_incidente": id_incidente, "id_taller": id_taller}).mappings().first()
+
+    cobro = db.execute(text("""
+        SELECT
+            c.id AS id_cobro,
+            c.estado_pago,
+            c.subtotal,
+            c.descuento,
+            c.total,
+            c.fecha_generacion,
+            c.fecha_aceptacion,
+            c.fecha_pago,
+            c.fecha_comprobante,
+            ps.id AS id_pago,
+            ps.metodo_pago,
+            ps.referencia_pago,
+            ps.monto_pagado,
+            ps.estado_pago AS estado_pago_registro,
+            ps.fecha_pago AS fecha_pago_registro,
+            cp.id AS id_comprobante,
+            cp.numero_comprobante,
+            cp.fecha_emision AS fecha_comprobante_emision
+        FROM operaciones.cobro_servicio c
+        LEFT JOIN operaciones.pago_servicio ps ON ps.id_cobro = c.id
+        LEFT JOIN operaciones.comprobante_pago cp ON cp.id_cobro = c.id
+        WHERE c.id_incidente = :id_incidente
+          AND c.id_asignacion = :id_asignacion
+        ORDER BY c.fecha_generacion DESC
+        LIMIT 1
+    """), {"id_incidente": id_incidente, "id_asignacion": id_asignacion}).mappings().first()
+
+    conceptos = []
+    if cobro:
+        conceptos = db.execute(text("""
+            SELECT
+                id,
+                id_concepto,
+                descripcion,
+                tipo,
+                cantidad,
+                precio_unitario,
+                subtotal,
+                observacion
+            FROM operaciones.detalle_cobro
+            WHERE id_cobro = :id_cobro
+            ORDER BY id ASC
+        """), {"id_cobro": cobro["id_cobro"]}).mappings().all()
+
+    evaluacion = db.execute(text("""
+        SELECT
+            id,
+            calificacion,
+            puntualidad,
+            trato,
+            solucion,
+            precio,
+            comentario,
+            fecha_evaluacion
+        FROM operaciones.evaluacion_servicio
+        WHERE id_incidente = :id_incidente
+          AND id_asignacion = :id_asignacion
+          AND id_taller = :id_taller
+        ORDER BY fecha_evaluacion DESC
+        LIMIT 1
+    """), {
+        "id_incidente": id_incidente,
+        "id_asignacion": id_asignacion,
+        "id_taller": id_taller
+    }).mappings().first()
+
+    return {
+        "evidencias": [serializar_mapping(evidencia) for evidencia in evidencias],
+        "cotizacion": serializar_mapping(cotizacion),
+        "pago": {
+            **serializar_mapping(cobro),
+            "conceptos": [serializar_mapping(concepto) for concepto in conceptos]
+        } if cobro else None,
+        "evaluacion": serializar_mapping(evaluacion)
+    }
 
 
 # Valida que el usuario tenga acceso a operar sobre un taller específico
@@ -716,7 +843,515 @@ def rechazar_asignacion(
         },
         "nueva_asignacion": nueva_asignacion["id"]
     }
-    
+
+# Lista el historial completo de servicios atendidos por el taller del admin logueado
+# Caso de uso: Historial de clientes atendidos por admin_taller con separacion por taller
+@router.get("/mi-taller/historial-servicios")
+def historial_servicios_mi_taller(
+    codigo_cliente: Optional[str] = Query(default=None),
+    estado_asignacion: Optional[int] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
+    if usuario.id_rol != 2:
+        raise HTTPException(status_code=403, detail="Solo el admin_taller puede consultar este historial")
+
+    taller = get_taller_admin(usuario, db)
+
+    filtros = ["a.id_taller = :id_taller"]
+    params = {"id_taller": taller.codigo, "limit": limit, "offset": offset}
+
+    if codigo_cliente:
+        filtros.append("i.codigo_usuario = :codigo_cliente")
+        params["codigo_cliente"] = codigo_cliente
+
+    if estado_asignacion is not None:
+        filtros.append("a.id_estado_asignacion = :estado_asignacion")
+        params["estado_asignacion"] = estado_asignacion
+
+    where_sql = " AND ".join(filtros)
+
+    total = db.execute(text(f"""
+        SELECT COUNT(*)
+        FROM operaciones.asignacion a
+        JOIN operaciones.incidente i ON i.codigo = a.id_incidente
+        WHERE {where_sql}
+    """), params).scalar()
+
+    clientes_atendidos = db.execute(text(f"""
+        SELECT
+            u.codigo,
+            u.nombre,
+            u.apellido,
+            u.email,
+            u.telefono,
+            COUNT(*) AS total_servicios,
+            MAX(a.fecha_asignacion) AS ultimo_servicio
+        FROM operaciones.asignacion a
+        JOIN operaciones.incidente i ON i.codigo = a.id_incidente
+        JOIN seguridad.usuario u ON u.codigo = i.codigo_usuario
+        WHERE {where_sql}
+        GROUP BY u.codigo, u.nombre, u.apellido, u.email, u.telefono
+        ORDER BY ultimo_servicio DESC
+    """), params).mappings().all()
+
+    servicios = db.execute(text(f"""
+        SELECT
+            a.id AS id_asignacion,
+            a.fecha_asignacion,
+            a.fecha_aceptacion,
+            a.tiempo,
+            a.observacion AS observacion_asignacion,
+            a.id_estado_asignacion,
+            ea.nombre AS estado_asignacion,
+            i.codigo AS id_incidente,
+            i.descripcion,
+            i.latitud,
+            i.longitud,
+            i.fecha_reporte,
+            i.fecha_cierre,
+            i.id_estado_incidente,
+            ei.nombre AS estado_incidente,
+            i.id_prioridad,
+            p.nivel AS prioridad,
+            i.id_categoria_problema,
+            cp.nombre AS categoria,
+            u.codigo AS codigo_cliente,
+            u.nombre AS cliente_nombre,
+            u.apellido AS cliente_apellido,
+            u.email AS cliente_email,
+            u.telefono AS cliente_telefono,
+            v.codigo AS id_vehiculo,
+            v.marca AS vehiculo_marca,
+            v.modelo AS vehiculo_modelo,
+            v.placa AS vehiculo_placa,
+            t.codigo AS id_taller,
+            t.nombre AS taller_nombre,
+            t.telefono AS taller_telefono,
+            t.direccion AS taller_direccion,
+            tec.codigo AS codigo_tecnico,
+            tec.nombre AS tecnico_nombre,
+            tec.email AS tecnico_email,
+            tec.telefono AS tecnico_telefono
+        FROM operaciones.asignacion a
+        JOIN operaciones.incidente i ON i.codigo = a.id_incidente
+        JOIN seguridad.usuario u ON u.codigo = i.codigo_usuario
+        JOIN talleres.taller t ON t.codigo = a.id_taller
+        LEFT JOIN talleres.tecnico tec ON tec.codigo = a.id_tecnico
+        LEFT JOIN clientes.vehiculo v ON v.codigo = i.id_vehiculo
+        LEFT JOIN catalogo.estado_asignacion ea ON ea.id = a.id_estado_asignacion
+        LEFT JOIN catalogo.estado_incidente ei ON ei.id = i.id_estado_incidente
+        LEFT JOIN catalogo.prioridad p ON p.codigo = i.id_prioridad
+        LEFT JOIN catalogo.categoria_problema cp ON cp.codigo = i.id_categoria_problema
+        WHERE {where_sql}
+        ORDER BY a.fecha_asignacion DESC, a.id DESC
+        LIMIT :limit OFFSET :offset
+    """), params).mappings().all()
+
+    resultado = []
+    for servicio in servicios:
+        id_incidente = servicio["id_incidente"]
+        id_asignacion = servicio["id_asignacion"]
+
+        evidencias = db.execute(text("""
+            SELECT
+                e.codigo,
+                e.fecha_subida,
+                e.transcripcion,
+                e.url_archivo,
+                e.id_tipo_evidencia,
+                te.nombre AS tipo_evidencia
+            FROM multimedia.evidencia e
+            LEFT JOIN catalogo.tipo_evidencia te ON te.codigo = e.id_tipo_evidencia
+            WHERE e.id_incidente = :id_incidente
+            ORDER BY e.fecha_subida DESC
+        """), {"id_incidente": id_incidente}).mappings().all()
+
+        cotizacion = db.execute(text("""
+            SELECT
+                ct.id,
+                ct.id_solicitud,
+                sc.ronda,
+                sc.estado AS estado_solicitud,
+                sc.fecha_solicitud,
+                sc.fecha_finalizacion,
+                ct.estado,
+                ct.distancia_km,
+                ct.monto_estimado,
+                ct.tiempo_llegada_minutos,
+                ct.tiempo_reparacion_minutos,
+                ct.descripcion_servicio,
+                ct.observacion,
+                ct.fecha_invitacion,
+                ct.fecha_respuesta,
+                ct.fecha_vencimiento
+            FROM operaciones.solicitud_cotizacion sc
+            JOIN operaciones.cotizacion_taller ct ON ct.id_solicitud = sc.id
+            WHERE sc.id_incidente = :id_incidente
+              AND ct.id_taller = :id_taller
+            ORDER BY ct.fecha_invitacion DESC
+            LIMIT 1
+        """), {"id_incidente": id_incidente, "id_taller": taller.codigo}).mappings().first()
+
+        cobro = db.execute(text("""
+            SELECT
+                c.id AS id_cobro,
+                c.estado_pago,
+                c.subtotal,
+                c.descuento,
+                c.total,
+                c.fecha_generacion,
+                c.fecha_aceptacion,
+                c.fecha_pago,
+                c.fecha_comprobante,
+                ps.id AS id_pago,
+                ps.metodo_pago,
+                ps.referencia_pago,
+                ps.monto_pagado,
+                ps.estado_pago AS estado_pago_registro,
+                ps.fecha_pago AS fecha_pago_registro,
+                cp.id AS id_comprobante,
+                cp.numero_comprobante,
+                cp.fecha_emision AS fecha_comprobante_emision
+            FROM operaciones.cobro_servicio c
+            LEFT JOIN operaciones.pago_servicio ps ON ps.id_cobro = c.id
+            LEFT JOIN operaciones.comprobante_pago cp ON cp.id_cobro = c.id
+            WHERE c.id_incidente = :id_incidente
+              AND c.id_asignacion = :id_asignacion
+            ORDER BY c.fecha_generacion DESC
+            LIMIT 1
+        """), {"id_incidente": id_incidente, "id_asignacion": id_asignacion}).mappings().first()
+
+        conceptos = []
+        if cobro:
+            conceptos = db.execute(text("""
+                SELECT
+                    id,
+                    id_concepto,
+                    descripcion,
+                    tipo,
+                    cantidad,
+                    precio_unitario,
+                    subtotal,
+                    observacion
+                FROM operaciones.detalle_cobro
+                WHERE id_cobro = :id_cobro
+                ORDER BY id ASC
+            """), {"id_cobro": cobro["id_cobro"]}).mappings().all()
+
+        evaluacion = db.execute(text("""
+            SELECT
+                id,
+                calificacion,
+                puntualidad,
+                trato,
+                solucion,
+                precio,
+                comentario,
+                fecha_evaluacion
+            FROM operaciones.evaluacion_servicio
+            WHERE id_incidente = :id_incidente
+              AND id_asignacion = :id_asignacion
+              AND id_taller = :id_taller
+            ORDER BY fecha_evaluacion DESC
+            LIMIT 1
+        """), {
+            "id_incidente": id_incidente,
+            "id_asignacion": id_asignacion,
+            "id_taller": taller.codigo
+        }).mappings().first()
+
+        resultado.append({
+            "id_asignacion": servicio["id_asignacion"],
+            "fecha_asignacion": servicio["fecha_asignacion"],
+            "fecha_aceptacion": servicio["fecha_aceptacion"],
+            "tiempo": servicio["tiempo"],
+            "observacion": servicio["observacion_asignacion"],
+            "estado_asignacion": {
+                "id": servicio["id_estado_asignacion"],
+                "nombre": servicio["estado_asignacion"]
+            },
+            "cliente": {
+                "codigo": servicio["codigo_cliente"],
+                "nombre": servicio["cliente_nombre"],
+                "apellido": servicio["cliente_apellido"],
+                "email": servicio["cliente_email"],
+                "telefono": servicio["cliente_telefono"]
+            },
+            "incidente": {
+                "codigo": servicio["id_incidente"],
+                "descripcion": servicio["descripcion"],
+                "latitud": servicio["latitud"],
+                "longitud": servicio["longitud"],
+                "fecha_reporte": servicio["fecha_reporte"],
+                "fecha_cierre": servicio["fecha_cierre"],
+                "estado": {
+                    "id": servicio["id_estado_incidente"],
+                    "nombre": servicio["estado_incidente"]
+                },
+                "prioridad": {
+                    "id": servicio["id_prioridad"],
+                    "nombre": servicio["prioridad"]
+                },
+                "categoria": {
+                    "id": servicio["id_categoria_problema"],
+                    "nombre": servicio["categoria"]
+                }
+            },
+            "vehiculo": {
+                "codigo": servicio["id_vehiculo"],
+                "marca": servicio["vehiculo_marca"],
+                "modelo": servicio["vehiculo_modelo"],
+                "placa": servicio["vehiculo_placa"]
+            },
+            "taller": {
+                "codigo": servicio["id_taller"],
+                "nombre": servicio["taller_nombre"],
+                "telefono": servicio["taller_telefono"],
+                "direccion": servicio["taller_direccion"]
+            },
+            "tecnico": {
+                "codigo": servicio["codigo_tecnico"],
+                "nombre": servicio["tecnico_nombre"],
+                "email": servicio["tecnico_email"],
+                "telefono": servicio["tecnico_telefono"]
+            } if servicio["codigo_tecnico"] else None,
+            "evidencias": [serializar_mapping(evidencia) for evidencia in evidencias],
+            "cotizacion": serializar_mapping(cotizacion),
+            "pago": {
+                **serializar_mapping(cobro),
+                "conceptos": [serializar_mapping(concepto) for concepto in conceptos]
+            } if cobro else None,
+            "evaluacion": serializar_mapping(evaluacion)
+        })
+
+    return jsonable_encoder({
+        "id_taller": taller.codigo,
+        "taller": taller.nombre,
+        "total": total,
+        "total_clientes_atendidos": len(clientes_atendidos),
+        "clientes_atendidos": [
+            serializar_mapping(cliente)
+            for cliente in clientes_atendidos
+        ],
+        "limit": limit,
+        "offset": offset,
+        "servicios": resultado
+    })
+
+
+# Lista el historial completo de servicios del cliente logueado
+# Caso de uso: Historial de servicios por cliente con tecnico, taller y precio
+@router.get("/mi-historial-servicios")
+def historial_servicios_cliente(
+    estado_asignacion: Optional[int] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    usuario: Usuario = Depends(get_current_usuario),
+    db: Session = Depends(get_db)
+):
+    if usuario.id_rol != 4:
+        raise HTTPException(status_code=403, detail="Solo el cliente puede consultar su historial")
+
+    filtros = ["i.codigo_usuario = :codigo_cliente"]
+    params = {"codigo_cliente": usuario.codigo, "limit": limit, "offset": offset}
+
+    if estado_asignacion is not None:
+        filtros.append("a.id_estado_asignacion = :estado_asignacion")
+        params["estado_asignacion"] = estado_asignacion
+
+    where_sql = " AND ".join(filtros)
+
+    total = db.execute(text(f"""
+        SELECT COUNT(*)
+        FROM operaciones.incidente i
+        LEFT JOIN operaciones.asignacion a ON a.id_incidente = i.codigo
+        WHERE {where_sql}
+    """), params).scalar()
+
+    servicios = db.execute(text(f"""
+        SELECT
+            a.id AS id_asignacion,
+            a.fecha_asignacion,
+            a.fecha_aceptacion,
+            a.tiempo,
+            a.observacion AS observacion_asignacion,
+            a.id_estado_asignacion,
+            ea.nombre AS estado_asignacion,
+            i.codigo AS id_incidente,
+            i.descripcion,
+            i.latitud,
+            i.longitud,
+            i.fecha_reporte,
+            i.fecha_cierre,
+            i.id_estado_incidente,
+            ei.nombre AS estado_incidente,
+            i.id_prioridad,
+            p.nivel AS prioridad,
+            i.id_categoria_problema,
+            cp.nombre AS categoria,
+            u.codigo AS codigo_cliente,
+            u.nombre AS cliente_nombre,
+            u.apellido AS cliente_apellido,
+            u.email AS cliente_email,
+            u.telefono AS cliente_telefono,
+            v.codigo AS id_vehiculo,
+            v.marca AS vehiculo_marca,
+            v.modelo AS vehiculo_modelo,
+            v.placa AS vehiculo_placa,
+            t.codigo AS id_taller,
+            t.nombre AS taller_nombre,
+            t.telefono AS taller_telefono,
+            t.direccion AS taller_direccion,
+            t.latitud AS taller_latitud,
+            t.longitud AS taller_longitud,
+            t.radio_cobertura_km,
+            t.activo AS taller_activo,
+            t.estado_registro AS taller_estado_registro,
+            t.horario_inicio AS taller_horario_inicio,
+            t.horario_fin AS taller_horario_fin,
+            tec.codigo AS codigo_tecnico,
+            tec.nombre AS tecnico_nombre,
+            tec.email AS tecnico_email,
+            tec.telefono AS tecnico_telefono,
+            tec.disponibilidad AS tecnico_disponibilidad,
+            tec.latitud AS tecnico_latitud,
+            tec.longitud AS tecnico_longitud,
+            tec.id_taller AS tecnico_id_taller
+        FROM operaciones.incidente i
+        LEFT JOIN operaciones.asignacion a ON a.id_incidente = i.codigo
+        JOIN seguridad.usuario u ON u.codigo = i.codigo_usuario
+        LEFT JOIN talleres.taller t ON t.codigo = a.id_taller
+        LEFT JOIN talleres.tecnico tec ON tec.codigo = a.id_tecnico
+        LEFT JOIN clientes.vehiculo v ON v.codigo = i.id_vehiculo
+        LEFT JOIN catalogo.estado_asignacion ea ON ea.id = a.id_estado_asignacion
+        LEFT JOIN catalogo.estado_incidente ei ON ei.id = i.id_estado_incidente
+        LEFT JOIN catalogo.prioridad p ON p.codigo = i.id_prioridad
+        LEFT JOIN catalogo.categoria_problema cp ON cp.codigo = i.id_categoria_problema
+        WHERE {where_sql}
+        ORDER BY COALESCE(a.fecha_asignacion, i.fecha_reporte) DESC, i.codigo DESC
+        LIMIT :limit OFFSET :offset
+    """), params).mappings().all()
+
+    resultado = []
+    for servicio in servicios:
+        detalles = {
+            "evidencias": [],
+            "cotizacion": None,
+            "pago": None,
+            "evaluacion": None
+        }
+        if servicio["id_asignacion"] and servicio["id_taller"]:
+            detalles = obtener_detalles_servicio(
+                db,
+                servicio["id_incidente"],
+                servicio["id_asignacion"],
+                servicio["id_taller"]
+            )
+
+        total_pagado = detalles["pago"]["total"] if detalles["pago"] else None
+        monto_cotizado = detalles["cotizacion"]["monto_estimado"] if detalles["cotizacion"] else None
+
+        resultado.append({
+            "id_asignacion": servicio["id_asignacion"],
+            "fecha_asignacion": servicio["fecha_asignacion"],
+            "fecha_aceptacion": servicio["fecha_aceptacion"],
+            "tiempo": servicio["tiempo"],
+            "observacion": servicio["observacion_asignacion"],
+            "estado_asignacion": {
+                "id": servicio["id_estado_asignacion"],
+                "nombre": servicio["estado_asignacion"]
+            },
+            "precio": {
+                "monto_cotizado": monto_cotizado,
+                "total_servicio": total_pagado,
+                "estado_pago": detalles["pago"]["estado_pago"] if detalles["pago"] else None
+            },
+            "cliente": {
+                "codigo": servicio["codigo_cliente"],
+                "nombre": servicio["cliente_nombre"],
+                "apellido": servicio["cliente_apellido"],
+                "email": servicio["cliente_email"],
+                "telefono": servicio["cliente_telefono"]
+            },
+            "incidente": {
+                "codigo": servicio["id_incidente"],
+                "descripcion": servicio["descripcion"],
+                "latitud": servicio["latitud"],
+                "longitud": servicio["longitud"],
+                "fecha_reporte": servicio["fecha_reporte"],
+                "fecha_cierre": servicio["fecha_cierre"],
+                "estado": {
+                    "id": servicio["id_estado_incidente"],
+                    "nombre": servicio["estado_incidente"]
+                },
+                "prioridad": {
+                    "id": servicio["id_prioridad"],
+                    "nombre": servicio["prioridad"]
+                },
+                "categoria": {
+                    "id": servicio["id_categoria_problema"],
+                    "nombre": servicio["categoria"]
+                }
+            },
+            "vehiculo": {
+                "codigo": servicio["id_vehiculo"],
+                "marca": servicio["vehiculo_marca"],
+                "modelo": servicio["vehiculo_modelo"],
+                "placa": servicio["vehiculo_placa"]
+            },
+            "taller": {
+                "codigo": servicio["id_taller"],
+                "nombre": servicio["taller_nombre"],
+                "telefono": servicio["taller_telefono"],
+                "direccion": servicio["taller_direccion"],
+                "latitud": servicio["taller_latitud"],
+                "longitud": servicio["taller_longitud"],
+                "radio_cobertura_km": servicio["radio_cobertura_km"],
+                "activo": servicio["taller_activo"],
+                "estado_registro": servicio["taller_estado_registro"],
+                "horario_inicio": servicio["taller_horario_inicio"],
+                "horario_fin": servicio["taller_horario_fin"]
+            } if servicio["id_taller"] else None,
+            "tecnico": {
+                "codigo": servicio["codigo_tecnico"],
+                "nombre": servicio["tecnico_nombre"],
+                "email": servicio["tecnico_email"],
+                "telefono": servicio["tecnico_telefono"],
+                "disponibilidad": servicio["tecnico_disponibilidad"],
+                "latitud": servicio["tecnico_latitud"],
+                "longitud": servicio["tecnico_longitud"],
+                "id_taller": servicio["tecnico_id_taller"],
+                "taller": {
+                    "codigo": servicio["id_taller"],
+                    "nombre": servicio["taller_nombre"],
+                    "telefono": servicio["taller_telefono"],
+                    "direccion": servicio["taller_direccion"]
+                } if servicio["id_taller"] else None
+            } if servicio["codigo_tecnico"] else None,
+            "evidencias": detalles["evidencias"],
+            "cotizacion": detalles["cotizacion"],
+            "pago": detalles["pago"],
+            "evaluacion": detalles["evaluacion"]
+        })
+
+    return jsonable_encoder({
+        "cliente": {
+            "codigo": usuario.codigo,
+            "nombre": usuario.nombre,
+            "apellido": usuario.apellido,
+            "email": usuario.email,
+            "telefono": usuario.telefono
+        },
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "servicios": resultado
+    })
+
+
 # Lista todas las asignaciones activas de un taller específico
 # Caso de uso: Gestión de solicitudes por parte del administrador del taller
 @router.get("/taller/{id_taller}")

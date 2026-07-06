@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from fastapi.staticfiles import StaticFiles
-from app.routers import auth, usuarios, vehiculos, talleres, tecnicos,incidentes, bitacora,evidencias,ia,asignacion,dashboard,solicitudes, tracking, validacion_arribo, chat, pagos, evaluaciones, notificaciones, suscripciones, cotizaciones, sync
+from app.routers import auth, usuarios, vehiculos, talleres, tecnicos,incidentes, bitacora,evidencias,ia,asignacion,dashboard,solicitudes, tracking, validacion_arribo, chat, pagos, evaluaciones, notificaciones, suscripciones, cotizaciones, sync, chatbot_landing
 import os 
 
 
@@ -45,6 +45,7 @@ app.include_router(solicitudes.router)
 app.include_router(tracking.router)
 app.include_router(validacion_arribo.router)
 app.include_router(chat.router)
+app.include_router(chatbot_landing.router)
 app.include_router(pagos.router)
 app.include_router(evaluaciones.router)
 app.include_router(notificaciones.router)
