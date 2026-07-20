@@ -15,6 +15,8 @@ from app.services.auth_service import hash_password, registrar_bitacora
 router = APIRouter(prefix="/chatbot/landing", tags=["Chatbot Landing"])
 
 
+# Contexto editable que usa el chatbot del landing para responder consultas comerciales.
+# Esta informacion es simulada para la presentacion y luego puede reemplazarse por datos reales.
 PLATAFORMA_INFO = {
     "nombre": "Plataforma Inteligente de Emergencias Vehiculares",
     "descripcion": (
@@ -92,6 +94,8 @@ PLATAFORMA_INFO = {
 }
 
 
+# Palabras clave usadas para clasificar preguntas del visitante en una intencion simple.
+# Se mantiene sin librerias externas para que el chatbot funcione en el despliegue actual.
 INTENCIONES = {
     "saludo": ["hola", "buenas", "buen dia", "buenas tardes", "buenas noches"],
     "como_funciona": ["como funciona", "funciona", "plataforma", "sistema", "emergencias"],
@@ -118,46 +122,62 @@ INTENCIONES = {
 
 
 class ChatbotMensajeRequest(BaseModel):
+    # Mensaje escrito por el visitante desde el widget del landing.
     mensaje: str = Field(min_length=1)
+    # Contexto opcional enviado por el frontend si desea mantener estado conversacional.
     contexto: Optional[dict] = None
 
 
 class ChatbotAccion(BaseModel):
+    # Codigo de accion para que el frontend muestre botones o abra formularios.
     tipo: str
+    # Texto visible del boton o accion sugerida.
     label: str
+    # Datos adicionales que necesita el frontend para ejecutar la accion.
     payload: Optional[dict] = None
 
 
 class ChatbotMensajeResponse(BaseModel):
+    # Texto principal que se muestra como respuesta del chatbot.
     respuesta: str
+    # Intencion detectada a partir del mensaje del usuario.
     intencion: str
+    # Valor simple para indicar que tan clara fue la coincidencia.
     confianza: float
+    # Botones o acciones sugeridas para continuar la conversacion.
     acciones: list[ChatbotAccion]
+    # Datos estructurados para renderizar planes, requisitos o procedimientos.
     datos: Optional[dict] = None
 
 
 class SolicitudTallerChatbotRequest(BaseModel):
+    # Datos del encargado que sera creado como admin_taller pendiente.
     codigo_usuario: str
     nombre: str
     apellido: str
     email: EmailStr
     password: str
     telefono: str
+    # Datos principales del taller interesado.
     nombre_taller: str
     telefono_taller: str
     direccion_taller: str
     latitud_taller: Decimal
     longitud_taller: Decimal
+    # Horario de atencion inicial del taller.
     horario_inicio: Optional[time] = time(8, 0)
     horario_fin: Optional[time] = time(18, 0)
+    # Marca el canal desde donde se genero la solicitud para auditoria.
     origen: str = "chatbot_landing"
 
 
 def normalizar(texto: str) -> str:
+    # Normaliza el texto para comparar palabras clave sin diferenciar mayusculas.
     return (texto or "").strip().lower()
 
 
 def detectar_intencion(mensaje: str):
+    # Recorre las palabras clave y selecciona la intencion con mayor coincidencia.
     texto = normalizar(mensaje)
     mejor_intencion = "fallback"
     mejor_score = 0
@@ -173,6 +193,7 @@ def detectar_intencion(mensaje: str):
 
 
 def acciones_base():
+    # Acciones comunes que ayudan al visitante a continuar desde cualquier respuesta.
     return [
         ChatbotAccion(tipo="ver_planes", label="Ver planes"),
         ChatbotAccion(tipo="ver_requisitos", label="Ver requisitos"),
@@ -181,6 +202,7 @@ def acciones_base():
 
 
 def construir_respuesta(intencion: str, confianza: float) -> ChatbotMensajeResponse:
+    # Construye la respuesta del chatbot usando la intencion detectada.
     if intencion == "saludo":
         return ChatbotMensajeResponse(
             respuesta=(
@@ -349,11 +371,13 @@ def construir_respuesta(intencion: str, confianza: float) -> ChatbotMensajeRespo
 
 @router.get("/contexto")
 def obtener_contexto_chatbot():
+    # Devuelve todo el contexto del landing para que el frontend pueda mostrar contenido inicial.
     return PLATAFORMA_INFO
 
 
 @router.get("/preguntas-frecuentes")
 def preguntas_frecuentes_chatbot():
+    # Preguntas sugeridas para mostrar accesos rapidos dentro del widget del chatbot.
     return {
         "preguntas": [
             {
@@ -392,6 +416,7 @@ def preguntas_frecuentes_chatbot():
 
 @router.post("/mensaje", response_model=ChatbotMensajeResponse)
 def responder_mensaje_chatbot(datos: ChatbotMensajeRequest):
+    # Punto principal del chatbot: recibe un mensaje, detecta intencion y retorna respuesta.
     intencion, confianza = detectar_intencion(datos.mensaje)
     return construir_respuesta(intencion, confianza)
 
@@ -402,12 +427,14 @@ def crear_solicitud_taller_desde_chatbot(
     request: Request,
     db: Session = Depends(get_db)
 ):
+    # Valida duplicados para evitar crear dos admin_taller con el mismo CI o correo.
     if db.query(Usuario).filter(Usuario.codigo == datos.codigo_usuario).first():
         raise HTTPException(status_code=400, detail="El CI ya esta registrado")
 
     if db.query(Usuario).filter(Usuario.email == datos.email).first():
         raise HTTPException(status_code=400, detail="El email ya esta registrado")
 
+    # Crea el usuario del encargado como admin_taller pendiente de aprobacion.
     nuevo_usuario = Usuario(
         codigo=datos.codigo_usuario,
         nombre=datos.nombre,
@@ -425,6 +452,7 @@ def crear_solicitud_taller_desde_chatbot(
     db.add(nuevo_usuario)
     db.flush()
 
+    # Crea el taller en estado pendiente hasta que el administrador apruebe la solicitud.
     nuevo_taller = Taller(
         nombre=datos.nombre_taller,
         telefono=datos.telefono_taller,
@@ -442,6 +470,7 @@ def crear_solicitud_taller_desde_chatbot(
     db.add(nuevo_taller)
     db.flush()
 
+    # Registra el evento para auditoria y defensa del caso de uso.
     registrar_bitacora(
         db=db,
         codigo_usuario=datos.codigo_usuario,
@@ -455,6 +484,7 @@ def crear_solicitud_taller_desde_chatbot(
     db.commit()
     db.refresh(nuevo_taller)
 
+    # Respuesta usada por el landing para mostrar confirmacion al taller interesado.
     return {
         "mensaje": "Solicitud enviada. El administrador revisara la informacion del taller.",
         "estado_registro": "pendiente",
