@@ -846,6 +846,7 @@ def rechazar_asignacion(
 
 # Lista el historial completo de servicios atendidos por el taller del admin logueado
 # Caso de uso: Historial de clientes atendidos por admin_taller con separacion por taller
+# Permite que el taller vea los servicios atendidos sin acceder a datos de otros talleres
 @router.get("/mi-taller/historial-servicios")
 def historial_servicios_mi_taller(
     codigo_cliente: Optional[str] = Query(default=None),
@@ -1144,6 +1145,7 @@ def historial_servicios_mi_taller(
 
 # Lista el historial completo de servicios del cliente logueado
 # Caso de uso: Historial de servicios por cliente con tecnico, taller y precio
+# Permite que el cliente consulte sus servicios anteriores y el detalle de atencion
 @router.get("/mi-historial-servicios")
 def historial_servicios_cliente(
     estado_asignacion: Optional[int] = Query(default=None),
